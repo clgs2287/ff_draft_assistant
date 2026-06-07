@@ -718,6 +718,25 @@ h2 {
   padding: 12px;
 }
 
+.export-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.export-panel button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.export-panel span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-align: center;
+}
+
 .team-toolbar {
   display: grid;
   grid-template-columns: 1fr 1fr;

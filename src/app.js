@@ -146,6 +146,22 @@ function deletePick(pickIndex) {
   });
 }
 
+function exportDraftHistory() {
+  if (!state.picks.length) return;
+
+  const payload = buildDraftHistoryExport();
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `ward19-draft-history-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function resetDraft() {
   if (!confirm("Reset all draft picks?")) return;
   setState({ ...defaultState(), mySlot: state.mySlot });
@@ -494,6 +510,10 @@ function renderTeamsView() {
             </label>
           `;
         }).join("")}
+      </div>
+      <div class="export-panel">
+        <button class="primary-lite" data-action="export-draft" ${state.picks.length ? "" : "disabled"}>Export Draft History</button>
+        <span>${state.picks.length ? `${state.picks.length}/${getTotalPicks()} picks ready` : "Enter picks before exporting"}</span>
       </div>
     </section>
     <section class="teams-grid">
@@ -1045,6 +1065,109 @@ function getTeamName(teamSlot) {
   return name || defaultTeamNames[teamSlot - 1];
 }
 
+function buildDraftHistoryExport() {
+  return {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    app: {
+      name: "Ward19 Draft Assistant",
+      cacheVersion: "ward19-draft-v30"
+    },
+    league: {
+      name: leagueSettings.name,
+      leagueId: leagueSettings.leagueId,
+      teams: leagueSettings.teams,
+      draftRounds: leagueSettings.draftRounds,
+      scoring: leagueSettings.scoring,
+      rosterSlots: leagueSettings.rosterSlots
+    },
+    mySlot: state.mySlot,
+    teamNames: state.teamNames,
+    picks: state.picks.map(serializePick),
+    teams: Array.from({ length: leagueSettings.teams }, (_, index) => buildTeamHistory(index + 1))
+  };
+}
+
+function serializePick(pick) {
+  return {
+    overallPick: pick.overallPick,
+    round: pick.round,
+    pickInRound: pick.pickInRound,
+    teamSlot: pick.teamSlot,
+    teamName: getTeamName(pick.teamSlot),
+    mocked: Boolean(pick.mocked),
+    player: serializePlayer(pick.player),
+    valueVsAdp: getValueGap(pick.player, pick.overallPick)
+  };
+}
+
+function serializePlayer(player) {
+  return {
+    id: player.id,
+    name: player.name,
+    position: player.position,
+    team: player.team,
+    bye: player.bye,
+    rank: player.rank,
+    tier: player.tier,
+    positionalRank: player.positionalRank,
+    adp: player.adp,
+    beatAdpRank: player.beatAdpRank,
+    yahooAdp: player.yahooAdp,
+    sleeperAdp: player.sleeperAdp,
+    espnAdp: player.espnAdp
+  };
+}
+
+function buildTeamHistory(teamSlot) {
+  const picks = state.picks.filter((pick) => pick.teamSlot === teamSlot);
+  const positionCounts = picks.reduce((counts, pick) => {
+    counts[pick.player.position] = (counts[pick.player.position] ?? 0) + 1;
+    return counts;
+  }, { QB: 0, RB: 0, WR: 0, TE: 0, DEF: 0 });
+  const firstByPosition = {};
+
+  for (const position of ["QB", "RB", "WR", "TE", "DEF"]) {
+    const firstPick = picks.find((pick) => pick.player.position === position);
+    firstByPosition[position] = firstPick ? { round: firstPick.round, overallPick: firstPick.overallPick } : null;
+  }
+
+  return {
+    teamSlot,
+    teamName: getTeamName(teamSlot),
+    isMyTeam: state.mySlot === teamSlot,
+    pickCount: picks.length,
+    positionCounts,
+    firstByPosition,
+    tendencies: summarizeTeamTendencies(picks, positionCounts, firstByPosition),
+    picks: picks.map(serializePick)
+  };
+}
+
+function summarizeTeamTendencies(picks, positionCounts, firstByPosition) {
+  const reaches = picks.filter((pick) => {
+    const gap = getValueGap(pick.player, pick.overallPick);
+    return gap !== null && gap <= -10;
+  }).length;
+  const values = picks.filter((pick) => {
+    const gap = getValueGap(pick.player, pick.overallPick);
+    return gap !== null && gap >= 10;
+  }).length;
+
+  return {
+    draftedMultipleQbs: positionCounts.QB >= 2,
+    qbCount: positionCounts.QB,
+    firstQbRound: firstByPosition.QB?.round ?? null,
+    earlyQb: (firstByPosition.QB?.round ?? 99) <= 5,
+    earlyTe: (firstByPosition.TE?.round ?? 99) <= 5,
+    earlyDefense: (firstByPosition.DEF?.round ?? 99) <= 12,
+    rbHeavy: positionCounts.RB >= positionCounts.WR + 2,
+    wrHeavy: positionCounts.WR >= positionCounts.RB + 2,
+    reaches,
+    values
+  };
+}
+
 function bindEvents() {
   app.querySelectorAll("[data-slot]").forEach((button) => {
     button.addEventListener("click", () => setState({ mySlot: Number(button.dataset.slot) }));
@@ -1092,6 +1215,7 @@ function bindEvents() {
   app.querySelector("[data-action='undo']")?.addEventListener("click", undoPick);
   app.querySelector("[data-action='reset']")?.addEventListener("click", resetDraft);
   app.querySelector("[data-action='cancel-edit']")?.addEventListener("click", cancelEditPick);
+  app.querySelector("[data-action='export-draft']")?.addEventListener("click", exportDraftHistory);
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);
   app.querySelector("[data-input='search']")?.addEventListener("input", (event) => {
