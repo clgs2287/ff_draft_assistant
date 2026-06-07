@@ -4,11 +4,17 @@ import { buildRoster, getMyUpcomingPicks, getPickInfo, getRosterCount, getRoster
 import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/recommendations.js";
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
+const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
+const APP_CACHE_VERSION = "ward19-draft-v35";
 const BOARD_LIMIT = 220;
 const TEAM_ROSTER_TEMPLATE = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST", "BN", "BN", "BN", "BN", "BN", "BN"];
+const TEAM_CODES = [
+  "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAC", "JAX", "KC", "LV", "LAC", "LAR", "MIA", "MIN", "NE", "NO", "NYG", "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS"
+];
 const app = document.querySelector("#app");
 
 let state = loadState();
+let playerData = loadPlayerData();
 
 function defaultState() {
   return {
@@ -49,6 +55,30 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function loadPlayerData() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PLAYER_DATA_KEY) || "null");
+    if (!saved || !Array.isArray(saved.players) || !saved.players.length) return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+function savePlayerData(nextPlayerData) {
+  playerData = nextPlayerData;
+  if (playerData) {
+    localStorage.setItem(PLAYER_DATA_KEY, JSON.stringify(playerData));
+  } else {
+    localStorage.removeItem(PLAYER_DATA_KEY);
+  }
+  render();
+}
+
+function getPlayerPool() {
+  return playerData?.players?.length ? playerData.players : fantasyProsPlayers;
+}
+
 function setState(nextState) {
   state = normalizeState({ ...state, ...nextState });
   saveState();
@@ -56,7 +86,7 @@ function setState(nextState) {
 }
 
 function draftPlayer(playerId) {
-  const player = fantasyProsPlayers.find((candidate) => candidate.id === playerId);
+  const player = getPlayerPool().find((candidate) => candidate.id === playerId);
   if (!player) return;
   const pickInfo = getPickInfo(state.picks.length + 1);
   setState({
@@ -92,7 +122,7 @@ function autoDraftToMyPick() {
     const pickInfo = getPickInfo(currentPick);
     if (pickInfo.teamSlot === state.mySlot) break;
 
-    const available = getAvailablePlayers(fantasyProsPlayers, picks);
+    const available = getAvailablePlayers(getPlayerPool(), picks);
     const player = chooseMockPlayer(available, picks, pickInfo);
     if (!player) break;
 
@@ -119,7 +149,7 @@ function cancelEditPick() {
 }
 
 function replacePickPlayer(pickIndex, playerId) {
-  const player = fantasyProsPlayers.find((candidate) => candidate.id === playerId);
+  const player = getPlayerPool().find((candidate) => candidate.id === playerId);
   if (!player || !state.picks[pickIndex]) return;
 
   const picks = state.picks.map((pick, index) => {
@@ -161,7 +191,7 @@ function backupCurrentDraft() {
     exportedAt: new Date().toISOString(),
     app: {
       name: "Ward19 Draft Assistant",
-      cacheVersion: "ward19-draft-v34",
+      cacheVersion: APP_CACHE_VERSION,
       storageKey: STORAGE_KEY
     },
     state: {
@@ -169,7 +199,8 @@ function backupCurrentDraft() {
       editPickIndex: null,
       editSearch: "",
       search: ""
-    }
+    },
+    playerData
   };
 
   downloadJson(payload, `ward19-current-draft-backup-${new Date().toISOString().slice(0, 10)}.json`);
@@ -191,6 +222,13 @@ function restoreDraftBackup(file) {
       if (!confirm(`Restore backup with ${pickCount} pick${pickCount === 1 ? "" : "s"}? This replaces the current draft on this device.`)) return;
 
       state = normalizeState({ ...defaultState(), ...payload.state, editPickIndex: null, editSearch: "", search: "" });
+      if (payload.playerData?.players?.length) {
+        playerData = payload.playerData;
+        localStorage.setItem(PLAYER_DATA_KEY, JSON.stringify(playerData));
+      } else {
+        playerData = null;
+        localStorage.removeItem(PLAYER_DATA_KEY);
+      }
       saveState();
       render();
     } catch {
@@ -198,6 +236,80 @@ function restoreDraftBackup(file) {
     }
   });
   reader.readAsText(file);
+}
+
+function importFantasyProsRankings(file) {
+  if (!file) return;
+
+  readTextFile(file, (text) => {
+    try {
+      const rankingPlayers = loadFantasyProsPlayersFromCsv(text);
+      if (!rankingPlayers.length) {
+        alert("No usable players were found in that FantasyPros rankings CSV.");
+        return;
+      }
+
+      const beatAdpRows = playerData?.beatAdpRows ?? [];
+      const { players, matched } = mergePlayersWithBeatAdp(rankingPlayers, beatAdpRows);
+      savePlayerData({
+        schemaVersion: 1,
+        importedAt: new Date().toISOString(),
+        rankingsFileName: file.name,
+        rankingsImportedAt: new Date().toISOString(),
+        beatAdpFileName: playerData?.beatAdpFileName ?? null,
+        beatAdpImportedAt: playerData?.beatAdpImportedAt ?? null,
+        rankingCount: rankingPlayers.length,
+        beatAdpCount: beatAdpRows.length,
+        matchedBeatAdp: matched,
+        rankingPlayers,
+        beatAdpRows,
+        players
+      });
+      alert(`Imported ${players.length} ranked players${beatAdpRows.length ? ` and matched ${matched} Beat ADP rows` : ""}.`);
+    } catch {
+      alert("Could not import that FantasyPros rankings CSV.");
+    }
+  });
+}
+
+function importBeatAdp(file) {
+  if (!file) return;
+
+  readTextFile(file, (text) => {
+    try {
+      const beatAdpRows = loadBeatAdpRowsFromCsv(text);
+      if (!beatAdpRows.length) {
+        alert("No usable Beat ADP rows were found in that CSV.");
+        return;
+      }
+
+      const basePlayers = playerData?.rankingPlayers?.length ? playerData.rankingPlayers : fantasyProsPlayers;
+      const { players, matched } = mergePlayersWithBeatAdp(basePlayers, beatAdpRows);
+      savePlayerData({
+        schemaVersion: 1,
+        importedAt: new Date().toISOString(),
+        rankingsFileName: playerData?.rankingsFileName ?? "Bundled FantasyPros rankings",
+        rankingsImportedAt: playerData?.rankingsImportedAt ?? null,
+        beatAdpFileName: file.name,
+        beatAdpImportedAt: new Date().toISOString(),
+        rankingCount: basePlayers.length,
+        beatAdpCount: beatAdpRows.length,
+        matchedBeatAdp: matched,
+        rankingPlayers: basePlayers,
+        beatAdpRows,
+        players
+      });
+      alert(`Imported ${beatAdpRows.length} Beat ADP rows and matched ${matched} players.`);
+    } catch {
+      alert("Could not import that Beat ADP CSV.");
+    }
+  });
+}
+
+function resetImportedPlayerData() {
+  if (!playerData) return;
+  if (!confirm("Reset imported rankings and ADP? The app will use the bundled player data again.")) return;
+  savePlayerData(null);
 }
 
 function downloadJson(payload, fileName) {
@@ -213,6 +325,172 @@ function downloadJson(payload, fileName) {
   URL.revokeObjectURL(url);
 }
 
+function readTextFile(file, onLoad) {
+  const reader = new FileReader();
+  reader.addEventListener("load", () => onLoad(String(reader.result || "")));
+  reader.addEventListener("error", () => alert("Could not read that file."));
+  reader.readAsText(file);
+}
+
+function loadFantasyProsPlayersFromCsv(text) {
+  return parseCsv(text)
+    .slice(1)
+    .map((cells) => {
+      const rank = parseNumber(cells[0]);
+      const tier = parseNumber(cells[1]);
+      const name = String(cells[2] ?? "").trim();
+      const team = normalizeTeam(cells[3]);
+      const posText = String(cells[4] ?? "").trim();
+      let position = posText.replace(/\d+$/g, "");
+      if (position === "DST") position = "DEF";
+      const positionalRank = parseNumber(posText.replace(/^\D+/g, ""));
+      const bye = parseNumber(cells[5]);
+      const ecrVsAdp = parseNumber(String(cells[9] ?? "").replace(/[^+\-0-9.]/g, "")) ?? 0;
+
+      if (!rank || !name || !position || position === "K") return null;
+
+      return {
+        id: toPlayerId(name, position, team),
+        name,
+        position,
+        team,
+        bye,
+        rank,
+        positionalRank,
+        tier,
+        adp: Math.max(1, rank + ecrVsAdp),
+        ecrVsAdp
+      };
+    })
+    .filter(Boolean);
+}
+
+function loadBeatAdpRowsFromCsv(text) {
+  return parseCsv(text)
+    .slice(1)
+    .map((cells) => {
+      const rawPlayer = String(cells[1] ?? "").trim();
+      const team = TEAM_CODES.find((code) => rawPlayer.endsWith(code));
+      const name = team ? rawPlayer.slice(0, -team.length).trim() : rawPlayer;
+
+      return {
+        beatAdpRank: parseNumber(cells[0]),
+        name,
+        team: normalizeTeam(team),
+        consensusAdp: parseNumber(cells[2]),
+        sleeperAdp: parseNumber(cells[3]),
+        espnAdp: parseNumber(cells[4]),
+        yahooAdp: parseNumber(cells[5]),
+        underdogAdp: parseNumber(cells[6]),
+        fantasyProsAdp: parseNumber(cells[7])
+      };
+    })
+    .filter((row) => row.name && row.team);
+}
+
+function mergePlayersWithBeatAdp(players, beatAdpRows) {
+  const beatAdpByKey = new Map(beatAdpRows.map((row) => [playerKey(row.name, row.team), row]));
+  let matched = 0;
+  const mergedPlayers = players.map((player) => {
+    const beatAdp = beatAdpByKey.get(playerKey(player.name, player.team));
+    if (!beatAdp) return player;
+
+    matched += 1;
+    const preferredAdp =
+      beatAdp.yahooAdp ??
+      beatAdp.consensusAdp ??
+      beatAdp.sleeperAdp ??
+      beatAdp.espnAdp ??
+      player.adp;
+
+    return {
+      ...player,
+      adp: preferredAdp,
+      beatAdpRank: beatAdp.beatAdpRank,
+      consensusAdp: beatAdp.consensusAdp,
+      sleeperAdp: beatAdp.sleeperAdp,
+      espnAdp: beatAdp.espnAdp,
+      yahooAdp: beatAdp.yahooAdp,
+      underdogAdp: beatAdp.underdogAdp,
+      fantasyProsAdp: beatAdp.fantasyProsAdp
+    };
+  });
+
+  return { players: mergedPlayers, matched };
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === "\"") {
+      if (quoted && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+
+    if (char === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => String(value).trim())) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((value) => String(value).trim())) rows.push(row);
+  return rows;
+}
+
+function parseNumber(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "-" || text === "\u2014") return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTeam(team) {
+  return String(team ?? "").trim() === "JAC" ? "JAX" : String(team ?? "").trim();
+}
+
+function nameKey(name) {
+  return String(name)
+    .toLowerCase()
+    .replace(/\b(ii|iii|iv|v)\b/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function playerKey(name, team) {
+  return `${nameKey(name)}|${normalizeTeam(team)}`;
+}
+
+function toPlayerId(name, position, team) {
+  return `${name}-${position}-${team}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 function resetDraft() {
   if (!confirm("Reset all draft picks?")) return;
   setState({ ...defaultState(), mySlot: state.mySlot });
@@ -225,8 +503,9 @@ function getCurrentContext() {
   const myRoster = state.mySlot ? buildRoster(state.picks, state.mySlot) : buildRoster([], 1);
   const upcoming = getMyUpcomingPicks(currentPick, state.mySlot);
   const nextTargetPick = getRecommendationTargetPick(currentPick, upcoming);
-  const recommendations = recommendPlayers(fantasyProsPlayers, state.picks, myRoster, currentPick, 8, nextTargetPick);
-  const available = getAvailablePlayers(fantasyProsPlayers, state.picks);
+  const players = getPlayerPool();
+  const recommendations = recommendPlayers(players, state.picks, myRoster, currentPick, 8, nextTargetPick);
+  const available = getAvailablePlayers(players, state.picks);
   return { currentPick, totalPicks, currentInfo, myRoster, recommendations, available, upcoming };
 }
 
@@ -269,6 +548,29 @@ function renderHeader(ctx) {
   `;
 }
 
+function getPlayerDataLabel() {
+  return playerData ? "Imported data" : "Bundled data";
+}
+
+function getPlayerDataStatus() {
+  if (!playerData) {
+    return {
+      label: "Bundled",
+      title: `${fantasyProsPlayers.length} bundled players`,
+      detail: "Import updated FantasyPros rankings or Beat ADP when you have fresh CSVs."
+    };
+  }
+
+  const rankings = playerData.rankingsFileName || "Imported rankings";
+  const adp = playerData.beatAdpFileName ? `ADP: ${playerData.beatAdpFileName}` : "No imported ADP file";
+  const matched = Number(playerData.matchedBeatAdp ?? 0);
+  return {
+    label: "Imported",
+    title: `${playerData.players.length} active players`,
+    detail: `${rankings}. ${adp}. ${matched} ADP matches.`
+  };
+}
+
 function renderSetup() {
   return `
     <section class="setup">
@@ -281,7 +583,7 @@ function renderSetup() {
           }).join("")}
         </div>
       </div>
-      <div class="league-chip">${leagueSettings.teams} teams - ${TOTAL_ROUNDS} rounds - No K</div>
+      <div class="league-chip">${leagueSettings.teams} teams - ${TOTAL_ROUNDS} rounds - No K - ${getPlayerDataLabel()}</div>
     </section>
   `;
 }
@@ -647,6 +949,7 @@ function renderTeamsView() {
         <span>${state.picks.length ? `${state.picks.length}/${getTotalPicks()} picks ready` : "Enter picks before exporting"}</span>
       </div>
     </section>
+    ${renderDataImportPanel()}
     <section class="teams-grid">
       ${state.teamNames.map((name, index) => {
         const teamSlot = index + 1;
@@ -666,6 +969,29 @@ function renderTeamsView() {
           </article>
         `;
       }).join("")}
+    </section>
+  `;
+}
+
+function renderDataImportPanel() {
+  const status = getPlayerDataStatus();
+  return `
+    <section class="panel data-panel">
+      <div class="panel-heading">
+        <h2>Rankings Data</h2>
+        <span>${status.label}</span>
+      </div>
+      <div class="data-actions">
+        <button class="primary-lite" data-action="choose-rankings-import">Import Rankings CSV</button>
+        <button class="secondary" data-action="choose-adp-import">Import ADP CSV</button>
+        <button class="secondary" data-action="reset-player-data" ${playerData ? "" : "disabled"}>Use Bundled Data</button>
+      </div>
+      <input class="file-input" type="file" accept=".csv,text/csv" data-input="rankings-import" />
+      <input class="file-input" type="file" accept=".csv,text/csv" data-input="adp-import" />
+      <div class="data-status">
+        <strong>${status.title}</strong>
+        <span>${status.detail}</span>
+      </div>
     </section>
   `;
 }
@@ -1325,7 +1651,7 @@ function buildDraftHistoryExport() {
     exportedAt: new Date().toISOString(),
     app: {
       name: "Ward19 Draft Assistant",
-      cacheVersion: "ward19-draft-v30"
+      cacheVersion: APP_CACHE_VERSION
     },
     league: {
       name: leagueSettings.name,
@@ -1480,6 +1806,17 @@ function bindEvents() {
     restoreDraftBackup(event.target.files?.[0]);
     event.target.value = "";
   });
+  app.querySelector("[data-action='choose-rankings-import']")?.addEventListener("click", () => app.querySelector("[data-input='rankings-import']")?.click());
+  app.querySelector("[data-input='rankings-import']")?.addEventListener("change", (event) => {
+    importFantasyProsRankings(event.target.files?.[0]);
+    event.target.value = "";
+  });
+  app.querySelector("[data-action='choose-adp-import']")?.addEventListener("click", () => app.querySelector("[data-input='adp-import']")?.click());
+  app.querySelector("[data-input='adp-import']")?.addEventListener("change", (event) => {
+    importBeatAdp(event.target.files?.[0]);
+    event.target.value = "";
+  });
+  app.querySelector("[data-action='reset-player-data']")?.addEventListener("click", resetImportedPlayerData);
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);
   app.querySelector("[data-input='search']")?.addEventListener("input", (event) => {

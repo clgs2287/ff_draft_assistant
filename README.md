@@ -47,13 +47,22 @@ http://192.168.4.38:5190
 - Personalized recommendations
 - My roster view
 - Team roster view
+- In-app CSV imports for updated FantasyPros rankings and Beat ADP
 - Undo and reset
 - Local browser save
 - PWA manifest and service worker
 
 ## Next Data Step
 
-Refresh the FantasyPros and Beat ADP CSVs closer to draft day, then run:
+From the app, open Teams > Rankings Data:
+
+- Import Rankings CSV for a fresh FantasyPros draft rankings export.
+- Import ADP CSV for a fresh Beat ADP export.
+- Use Bundled Data to reset back to the checked-in data.
+
+The imported player pool is saved locally on that device and is included in current draft backups.
+
+For a checked-in data refresh from the computer, refresh the FantasyPros and Beat ADP CSVs closer to draft day, then run:
 
 ```powershell
 node scripts\merge-rankings.mjs

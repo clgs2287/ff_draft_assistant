@@ -917,6 +917,41 @@ h2 {
   display: none;
 }
 
+.data-panel {
+  margin-bottom: 12px;
+}
+
+.data-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.data-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.data-status {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: rgba(47, 131, 255, 0.06);
+}
+
+.data-status strong {
+  color: #ffffff;
+  font-size: 0.9rem;
+}
+
+.data-status span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
 .team-toolbar {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1086,6 +1121,10 @@ h2 {
   }
 
   .backup-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .data-actions {
     grid-template-columns: 1fr;
   }
 
