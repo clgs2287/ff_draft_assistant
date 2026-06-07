@@ -19,6 +19,7 @@ function defaultState() {
     editSearch: "",
     teamNames: defaultTeamNames,
     teamSort: "roster",
+    liveFilter: "ALL",
     positionFilter: "ALL",
     activeView: "draft"
   };
@@ -258,10 +259,10 @@ function renderDraftView(ctx) {
       <button class="danger" data-action="reset">Reset</button>
     </div>
     ${renderMockControls(ctx)}
+    ${renderLiveEntry(ctx)}
     ${renderDraftPulse(ctx)}
     ${renderRecommendations(ctx)}
     ${renderLikelyGone(ctx)}
-    ${renderSearch(ctx)}
     ${renderRecentPicks()}
     ${renderCorrectionPanel(ctx)}
   `;
@@ -331,6 +332,46 @@ function renderRecommendations(ctx) {
       </div>
       <div class="player-list">
         ${ctx.recommendations.slice(0, 5).map((player, index) => renderPlayerRow(player, index === 0 ? "Best pick" : player.reason, true, ctx.currentPick)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderLiveEntry(ctx) {
+  const positions = ["ALL", "QB", "RB", "WR", "TE", "DEF"];
+  const query = state.search.trim().toLowerCase();
+  const source = query ? ctx.available : getFocusedBoard(ctx.available);
+  const players = source
+    .filter((player) => state.liveFilter === "ALL" || player.position === state.liveFilter)
+    .filter((player) => !query || `${player.name} ${player.team} ${player.position}`.toLowerCase().includes(query))
+    .slice(0, 8);
+  const lastPick = state.picks[state.picks.length - 1];
+
+  return `
+    <section class="panel live-panel panel-accent accent-enter">
+      <div class="panel-heading">
+        <h2>Live Entry</h2>
+        <span>Pick ${Math.min(ctx.currentPick, ctx.totalPicks)} - ${getTeamName(ctx.currentInfo.teamSlot)}</span>
+      </div>
+      <div class="live-status">
+        <div>
+          <span class="label">On The Clock</span>
+          <strong>Round ${ctx.currentInfo.round}, Pick ${ctx.currentInfo.pickInRound}</strong>
+          <em>${state.mySlot && ctx.currentInfo.teamSlot === state.mySlot ? "Your pick" : getTeamName(ctx.currentInfo.teamSlot)}</em>
+        </div>
+        <button class="secondary" data-action="undo" ${state.picks.length ? "" : "disabled"}>Undo Last</button>
+      </div>
+      <input class="search live-search" data-input="search" value="${escapeHtml(state.search)}" placeholder="Type player name, team, or position" autocomplete="off" />
+      <div class="filter-row live-filters">
+        ${positions.map((position) => `<button class="${state.liveFilter === position ? "active" : ""}" data-live-filter="${position}">${position}</button>`).join("")}
+      </div>
+      <div class="player-list compact live-results">
+        ${players.length ? players.map((player) => renderPlayerRow(player, "Draft", true, ctx.currentPick)).join("") : "<p class='empty'>No matching available players.</p>"}
+      </div>
+      <div class="live-last">
+        <span>Last Pick</span>
+        <strong>${lastPick ? `${lastPick.overallPick}. ${lastPick.player.name}` : "None yet"}</strong>
+        <em>${lastPick ? `${lastPick.player.position} - ${getTeamName(lastPick.teamSlot)}${lastPick.mocked ? " - mocked" : ""}` : "Draft board is clean."}</em>
       </div>
     </section>
   `;
@@ -1316,6 +1357,10 @@ function bindEvents() {
 
   app.querySelectorAll("[data-filter]").forEach((button) => {
     button.addEventListener("click", () => setState({ positionFilter: button.dataset.filter }));
+  });
+
+  app.querySelectorAll("[data-live-filter]").forEach((button) => {
+    button.addEventListener("click", () => setState({ liveFilter: button.dataset.liveFilter }));
   });
 
   app.querySelectorAll("[data-team-sort]").forEach((button) => {

@@ -228,6 +228,67 @@ h2 {
   cursor: default;
 }
 
+.live-panel {
+  display: grid;
+}
+
+.live-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(47, 131, 255, 0.06);
+}
+
+.live-status strong,
+.live-last strong {
+  display: block;
+  color: #ffffff;
+  overflow-wrap: anywhere;
+}
+
+.live-status em,
+.live-last em {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.live-search {
+  min-height: 56px;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.live-filters {
+  grid-template-columns: repeat(6, 1fr);
+  padding-top: 0;
+}
+
+.live-results {
+  max-height: 44vh;
+}
+
+.live-last {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border-top: 1px solid var(--line);
+  background: rgba(8, 16, 27, 0.72);
+}
+
+.live-last span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .panel {
   position: relative;
   overflow: hidden;
@@ -969,6 +1030,14 @@ h2 {
   }
 
   .filter-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .live-status {
+    grid-template-columns: 1fr;
+  }
+
+  .live-filters {
     grid-template-columns: repeat(3, 1fr);
   }
 
