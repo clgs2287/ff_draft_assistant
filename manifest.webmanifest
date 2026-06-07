@@ -1,0 +1,17 @@
+{
+  "name": "Ward19 Draft Assistant",
+  "short_name": "Ward19 Draft",
+  "description": "Mobile fantasy football draft assistant for the Ward19 league.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7f4ee",
+  "theme_color": "#17324d",
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
