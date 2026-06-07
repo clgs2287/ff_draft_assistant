@@ -186,15 +186,21 @@ h2 {
 }
 
 .strategy-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 7px;
+  display: flex;
+  gap: 8px;
+  margin: 0 -2px;
+  padding: 0 2px 4px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
 }
 
 .strategy-grid button {
-  min-height: 38px;
-  padding: 0 6px;
-  font-size: 0.74rem;
+  flex: 0 0 auto;
+  min-width: 112px;
+  min-height: 42px;
+  padding: 0 12px;
+  scroll-snap-align: start;
+  font-size: 0.78rem;
 }
 
 .league-chip {
@@ -1143,11 +1149,11 @@ h2 {
   }
 
   .slot-grid {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .strategy-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-right: -12px;
   }
 
   .filter-row {
