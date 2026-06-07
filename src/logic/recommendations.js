@@ -36,8 +36,9 @@ export function recommendPlayers(players, picks, roster, currentPick, limit = 8,
 
   const ranked = available
     .map((player) => {
-      const score = scorePlayer(player, roster, needs, currentPick, available, nextPick);
-      return { ...player, score, reason: buildReason(player, roster, needs, currentPick, available, nextPick) };
+      const breakdown = getScoreBreakdown(player, roster, needs, currentPick, available, nextPick);
+      const score = breakdown.reduce((total, item) => total + item.value, 0);
+      return { ...player, score, breakdown: getVisibleBreakdown(breakdown), reason: buildReason(player, roster, needs, currentPick, available, nextPick) };
     })
     .sort((a, b) => b.score - a.score);
 
@@ -64,6 +65,10 @@ function limitBackupOnesies(players, roster) {
 }
 
 function scorePlayer(player, roster, needs, currentPick, available, nextPick) {
+  return getScoreBreakdown(player, roster, needs, currentPick, available, nextPick).reduce((total, item) => total + item.value, 0);
+}
+
+function getScoreBreakdown(player, roster, needs, currentPick, available, nextPick) {
   const rankValue = Math.max(270 - player.rank * 2.2, 0);
   const tierValue = Math.max(13 - Number(player.tier), 0) * 9;
   const positionValue = POSITION_WEIGHTS[player.position] ?? 0;
@@ -81,7 +86,57 @@ function scorePlayer(player, roster, needs, currentPick, available, nextPick) {
   const defenseTimingPenalty = player.position === "DEF" && currentPick < leagueSettings.teams * (leagueSettings.rosterSlots.QB + leagueSettings.rosterSlots.RB + leagueSettings.rosterSlots.WR + leagueSettings.rosterSlots.TE + leagueSettings.rosterSlots.FLEX) ? 70 : 0;
   const onesieTimingPenalty = getOnesieTimingPenalty(player, roster, needs, currentPick);
 
-  return rankValue + tierValue + positionValue + starterNeed + flexNeed + valueVsAdp + tierDrop + rosterUrgency + onesieValueBonus + stackBonus + returnRisk + pathBonus - overfillPenalty - depthBalancePenalty - defenseTimingPenalty - onesieTimingPenalty;
+  return [
+    { label: "Rank", value: rankValue },
+    { label: "Tier", value: tierValue },
+    { label: "Position", value: positionValue },
+    { label: "Starter need", value: starterNeed },
+    { label: "Flex", value: flexNeed },
+    { label: "ADP value", value: valueVsAdp },
+    { label: "Tier drop", value: tierDrop },
+    { label: "Roster urgency", value: rosterUrgency },
+    { label: "Backup value", value: onesieValueBonus },
+    { label: "Stack", value: stackBonus },
+    { label: "May not return", value: returnRisk },
+    { label: "Next-pick drop", value: pathBonus },
+    { label: "Overfill", value: -overfillPenalty },
+    { label: "Depth balance", value: -depthBalancePenalty },
+    { label: "DEF timing", value: -defenseTimingPenalty },
+    { label: "QB/TE timing", value: -onesieTimingPenalty }
+  ];
+}
+
+function getVisibleBreakdown(breakdown) {
+  const priority = new Set([
+    "Starter need",
+    "Flex",
+    "ADP value",
+    "Tier drop",
+    "Roster urgency",
+    "Backup value",
+    "Stack",
+    "May not return",
+    "Next-pick drop",
+    "Overfill",
+    "Depth balance",
+    "DEF timing",
+    "QB/TE timing"
+  ]);
+
+  const meaningful = breakdown
+    .filter((item) => Math.abs(item.value) >= 0.5 && priority.has(item.label))
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+    .slice(0, 5);
+
+  const core = breakdown
+    .filter((item) => ["Rank", "Tier"].includes(item.label) && Math.abs(item.value) >= 0.5)
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+    .slice(0, Math.max(0, 4 - meaningful.length));
+
+  return [...meaningful, ...core].map((item) => ({
+    ...item,
+    value: Math.round(item.value)
+  }));
 }
 
 function getAdpValueBonus(player, currentPick) {

@@ -506,6 +506,10 @@ h2 {
   border-bottom: 0;
 }
 
+.player-row.has-breakdown {
+  align-items: start;
+}
+
 .rank {
   display: inline-flex;
   width: 34px;
@@ -572,6 +576,36 @@ h2 {
   border-color: rgba(215, 25, 63, 0.32);
   background: rgba(215, 25, 63, 0.1);
   color: var(--red);
+}
+
+.score-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.score-breakdown span {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.score-breakdown .positive {
+  border: 1px solid rgba(242, 193, 78, 0.25);
+  background: rgba(242, 193, 78, 0.1);
+  color: #f7d98b;
+}
+
+.score-breakdown .negative {
+  border: 1px solid rgba(215, 25, 63, 0.32);
+  background: rgba(215, 25, 63, 0.11);
+  color: #ff9aac;
 }
 
 .meta {

@@ -161,7 +161,7 @@ function backupCurrentDraft() {
     exportedAt: new Date().toISOString(),
     app: {
       name: "Ward19 Draft Assistant",
-      cacheVersion: "ward19-draft-v33",
+      cacheVersion: "ward19-draft-v34",
       storageKey: STORAGE_KEY
     },
     state: {
@@ -381,7 +381,7 @@ function renderRecommendations(ctx) {
         <span>${state.mySlot ? "For your roster" : "Set slot to personalize"}</span>
       </div>
       <div class="player-list">
-        ${ctx.recommendations.slice(0, 5).map((player, index) => renderPlayerRow(player, index === 0 ? "Best pick" : player.reason, true, ctx.currentPick)).join("")}
+        ${ctx.recommendations.slice(0, 5).map((player, index) => renderPlayerRow(player, index === 0 ? `Best pick - ${formatScore(player.score)}` : `${formatScore(player.score)} - ${player.reason}`, true, ctx.currentPick)).join("")}
       </div>
     </section>
   `;
@@ -801,7 +801,7 @@ function formatDraftPickLabel(pick) {
 
 function renderPlayerRow(player, meta, canDraft, currentPick = state.picks.length + 1) {
   return `
-    <button class="player-row" ${canDraft ? `data-draft="${player.id}"` : ""}>
+    <button class="player-row ${player.breakdown ? "has-breakdown" : ""}" ${canDraft ? `data-draft="${player.id}"` : ""}>
       <span class="rank">${player.rank}</span>
       <span class="player-main">
         <strong>${player.name}</strong>
@@ -811,10 +811,31 @@ function renderPlayerRow(player, meta, canDraft, currentPick = state.picks.lengt
           <span>ADP ${formatAdp(player.adp)}</span>
           <span class="${getValueClass(player, currentPick)}">${formatValue(player, currentPick)}</span>
         </span>
+        ${renderScoreBreakdown(player)}
       </span>
       <span class="meta">${meta}</span>
     </button>
   `;
+}
+
+function renderScoreBreakdown(player) {
+  if (!player.breakdown?.length) return "";
+
+  return `
+    <span class="score-breakdown">
+      ${player.breakdown.map((item) => `<span class="${item.value < 0 ? "negative" : "positive"}">${item.label} ${formatSignedScore(item.value)}</span>`).join("")}
+    </span>
+  `;
+}
+
+function formatScore(score) {
+  const rounded = Math.round(score);
+  return `Score ${rounded}`;
+}
+
+function formatSignedScore(value) {
+  const rounded = Math.round(value);
+  return rounded > 0 ? `+${rounded}` : String(rounded);
 }
 
 function isLikelyGoneBefore(player, targetPick) {
