@@ -8,6 +8,7 @@ const POSITION_WEIGHTS = {
   QB: 4,
   DEF: -45
 };
+const STRATEGY_MODES = new Set(["balanced", "wr-heavy", "hero-rb", "elite-onesie", "value-only"]);
 const ELITE_ONESIE_RANK = 5;
 const BACKUP_ONESIE_VALUE_GAP = 10;
 const STACK_REACH_LIMIT = -14;
@@ -30,15 +31,16 @@ export function getAvailablePlayers(players, picks) {
   return players.filter((player) => !draftedIds.has(player.id)).sort((a, b) => a.rank - b.rank);
 }
 
-export function recommendPlayers(players, picks, roster, currentPick, limit = 8, nextPick = null) {
+export function recommendPlayers(players, picks, roster, currentPick, limit = 8, nextPick = null, strategyMode = "balanced") {
   const available = getAvailablePlayers(players, picks);
   const needs = getRosterNeeds(roster);
+  const mode = STRATEGY_MODES.has(strategyMode) ? strategyMode : "balanced";
 
   const ranked = available
     .map((player) => {
-      const breakdown = getScoreBreakdown(player, roster, needs, currentPick, available, nextPick);
+      const breakdown = getScoreBreakdown(player, roster, needs, currentPick, available, nextPick, mode);
       const score = breakdown.reduce((total, item) => total + item.value, 0);
-      return { ...player, score, breakdown: getVisibleBreakdown(breakdown), reason: buildReason(player, roster, needs, currentPick, available, nextPick) };
+      return { ...player, score, breakdown: getVisibleBreakdown(breakdown), reason: buildReason(player, roster, needs, currentPick, available, nextPick, mode) };
     })
     .sort((a, b) => b.score - a.score);
 
@@ -64,11 +66,11 @@ function limitBackupOnesies(players, roster) {
   });
 }
 
-function scorePlayer(player, roster, needs, currentPick, available, nextPick) {
-  return getScoreBreakdown(player, roster, needs, currentPick, available, nextPick).reduce((total, item) => total + item.value, 0);
+function scorePlayer(player, roster, needs, currentPick, available, nextPick, strategyMode = "balanced") {
+  return getScoreBreakdown(player, roster, needs, currentPick, available, nextPick, strategyMode).reduce((total, item) => total + item.value, 0);
 }
 
-function getScoreBreakdown(player, roster, needs, currentPick, available, nextPick) {
+function getScoreBreakdown(player, roster, needs, currentPick, available, nextPick, strategyMode) {
   const rankValue = Math.max(270 - player.rank * 2.2, 0);
   const tierValue = Math.max(13 - Number(player.tier), 0) * 9;
   const positionValue = POSITION_WEIGHTS[player.position] ?? 0;
@@ -85,6 +87,7 @@ function getScoreBreakdown(player, roster, needs, currentPick, available, nextPi
   const pathBonus = getNextPickPathBonus(player, roster, needs, available, nextPick);
   const defenseTimingPenalty = player.position === "DEF" && currentPick < leagueSettings.teams * (leagueSettings.rosterSlots.QB + leagueSettings.rosterSlots.RB + leagueSettings.rosterSlots.WR + leagueSettings.rosterSlots.TE + leagueSettings.rosterSlots.FLEX) ? 70 : 0;
   const onesieTimingPenalty = getOnesieTimingPenalty(player, roster, needs, currentPick);
+  const strategy = getStrategyAdjustment(player, roster, needs, currentPick, strategyMode);
 
   return [
     { label: "Rank", value: rankValue },
@@ -99,6 +102,7 @@ function getScoreBreakdown(player, roster, needs, currentPick, available, nextPi
     { label: "Stack", value: stackBonus },
     { label: "May not return", value: returnRisk },
     { label: "Next-pick drop", value: pathBonus },
+    { label: "Strategy", value: strategy },
     { label: "Overfill", value: -overfillPenalty },
     { label: "Depth balance", value: -depthBalancePenalty },
     { label: "DEF timing", value: -defenseTimingPenalty },
@@ -117,6 +121,7 @@ function getVisibleBreakdown(breakdown) {
     "Stack",
     "May not return",
     "Next-pick drop",
+    "Strategy",
     "Overfill",
     "Depth balance",
     "DEF timing",
@@ -309,7 +314,47 @@ function getTierDropBonus(player, available) {
   return 0;
 }
 
-function buildReason(player, roster, needs, currentPick, available, nextPick) {
+function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode) {
+  if (strategyMode === "balanced") return 0;
+
+  const drafted = getRosterCount(roster);
+  const round = Math.max(1, Math.ceil(currentPick / leagueSettings.teams));
+  const rosterPlayers = getRosterPlayers(roster);
+  const rbCount = rosterPlayers.filter((candidate) => candidate.position === "RB").length;
+  const wrCount = rosterPlayers.filter((candidate) => candidate.position === "WR").length;
+  const valueGap = getAdpValueGap(player, currentPick);
+  const isValue = valueGap !== null && valueGap >= 8;
+  const isReach = valueGap !== null && valueGap <= -8;
+
+  if (strategyMode === "wr-heavy") {
+    if (player.position === "WR" && wrCount < 6) return round <= 8 ? 14 : 7;
+    if (player.position === "RB" && rbCount >= 3 && needs.RB <= 0 && needs.FLEX <= 0) return -10;
+    return 0;
+  }
+
+  if (strategyMode === "hero-rb") {
+    if (player.position === "RB" && rbCount === 0 && round <= 3) return 18;
+    if (player.position === "RB" && rbCount >= 2 && round <= 8 && !isValue) return -14;
+    if (player.position === "WR" && rbCount >= 1 && wrCount < 6) return 12;
+    return 0;
+  }
+
+  if (strategyMode === "elite-onesie") {
+    if (["QB", "TE"].includes(player.position) && roster[player.position].length === 0 && Number(player.positionalRank) <= ELITE_ONESIE_RANK && round <= 6) return 18;
+    if (["QB", "TE"].includes(player.position) && roster[player.position].length === 0 && Number(player.positionalRank) > ELITE_ONESIE_RANK && round <= 9 && !isValue) return -10;
+    return 0;
+  }
+
+  if (strategyMode === "value-only") {
+    if (isValue) return Math.min(valueGap, 18) * 1.2;
+    if (isReach && drafted < leagueSettings.draftRounds - 2) return Math.max(valueGap, -18) * 1.15;
+    return 0;
+  }
+
+  return 0;
+}
+
+function buildReason(player, roster, needs, currentPick, available, nextPick, strategyMode = "balanced") {
   const reasons = [];
   const stackFit = getStackFit(player, roster, currentPick);
   if (needs[player.position] > 0) reasons.push(`${player.position} starter need`);
@@ -327,6 +372,8 @@ function buildReason(player, roster, needs, currentPick, available, nextPick) {
   if (getAdpValueBonus(player, currentPick) >= 2.8) reasons.push("value vs ADP");
   if (getAdpValueBonus(player, currentPick) <= -8) reasons.push("early vs ADP");
   if (getTierDropBonus(player, available) > 0) reasons.push("tier drop after this range");
+  if (getStrategyAdjustment(player, roster, needs, currentPick, strategyMode) >= 8) reasons.push("strategy fit");
+  if (getStrategyAdjustment(player, roster, needs, currentPick, strategyMode) <= -8) reasons.push("strategy penalty");
   return reasons.slice(0, 3).join(" - ") || `Ranked #${player.rank} overall`;
 }
 

@@ -5,11 +5,18 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v35";
+const APP_CACHE_VERSION = "ward19-draft-v36";
 const BOARD_LIMIT = 220;
 const TEAM_ROSTER_TEMPLATE = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST", "BN", "BN", "BN", "BN", "BN", "BN"];
 const TEAM_CODES = [
   "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAC", "JAX", "KC", "LV", "LAC", "LAR", "MIA", "MIN", "NE", "NO", "NYG", "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS"
+];
+const STRATEGY_MODES = [
+  { id: "balanced", label: "Balanced", detail: "Best overall build" },
+  { id: "wr-heavy", label: "WR Heavy", detail: "Lean into PPR depth" },
+  { id: "hero-rb", label: "Hero RB", detail: "One early RB, then WR" },
+  { id: "elite-onesie", label: "Elite QB/TE", detail: "Push top QB or TE" },
+  { id: "value-only", label: "Value Only", detail: "Respect ADP value" }
 ];
 const app = document.querySelector("#app");
 
@@ -27,6 +34,7 @@ function defaultState() {
     teamSort: "roster",
     liveFilter: "ALL",
     positionFilter: "ALL",
+    strategyMode: "balanced",
     activeView: "draft"
   };
 }
@@ -42,8 +50,10 @@ function loadState() {
 
 function normalizeState(nextState) {
   const savedTeamNames = Array.isArray(nextState.teamNames) ? nextState.teamNames : [];
+  const strategyMode = STRATEGY_MODES.some((mode) => mode.id === nextState.strategyMode) ? nextState.strategyMode : "balanced";
   return {
     ...nextState,
+    strategyMode,
     teamNames: Array.from({ length: leagueSettings.teams }, (_, index) => {
       const name = String(savedTeamNames[index] ?? "").trim();
       return name || defaultTeamNames[index];
@@ -493,7 +503,7 @@ function toPlayerId(name, position, team) {
 
 function resetDraft() {
   if (!confirm("Reset all draft picks?")) return;
-  setState({ ...defaultState(), mySlot: state.mySlot });
+  setState({ ...defaultState(), mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamSort: state.teamSort });
 }
 
 function getCurrentContext() {
@@ -504,7 +514,7 @@ function getCurrentContext() {
   const upcoming = getMyUpcomingPicks(currentPick, state.mySlot);
   const nextTargetPick = getRecommendationTargetPick(currentPick, upcoming);
   const players = getPlayerPool();
-  const recommendations = recommendPlayers(players, state.picks, myRoster, currentPick, 8, nextTargetPick);
+  const recommendations = recommendPlayers(players, state.picks, myRoster, currentPick, 8, nextTargetPick, state.strategyMode);
   const available = getAvailablePlayers(players, state.picks);
   return { currentPick, totalPicks, currentInfo, myRoster, recommendations, available, upcoming };
 }
@@ -572,6 +582,7 @@ function getPlayerDataStatus() {
 }
 
 function renderSetup() {
+  const activeStrategy = getActiveStrategyMode();
   return `
     <section class="setup">
       <div>
@@ -584,8 +595,22 @@ function renderSetup() {
         </div>
       </div>
       <div class="league-chip">${leagueSettings.teams} teams - ${TOTAL_ROUNDS} rounds - No K - ${getPlayerDataLabel()}</div>
+      <div class="strategy-control">
+        <div>
+          <span class="label">Draft Strategy</span>
+          <strong>${activeStrategy.label}</strong>
+          <em>${activeStrategy.detail}</em>
+        </div>
+        <div class="strategy-grid">
+          ${STRATEGY_MODES.map((mode) => `<button class="${state.strategyMode === mode.id ? "active" : ""}" data-strategy="${mode.id}">${mode.label}</button>`).join("")}
+        </div>
+      </div>
     </section>
   `;
+}
+
+function getActiveStrategyMode() {
+  return STRATEGY_MODES.find((mode) => mode.id === state.strategyMode) ?? STRATEGY_MODES[0];
 }
 
 function renderTabs() {
@@ -1751,6 +1776,10 @@ function summarizeTeamTendencies(picks, positionCounts, firstByPosition) {
 function bindEvents() {
   app.querySelectorAll("[data-slot]").forEach((button) => {
     button.addEventListener("click", () => setState({ mySlot: Number(button.dataset.slot) }));
+  });
+
+  app.querySelectorAll("[data-strategy]").forEach((button) => {
+    button.addEventListener("click", () => setState({ strategyMode: button.dataset.strategy }));
   });
 
   app.querySelectorAll("[data-view]").forEach((button) => {
