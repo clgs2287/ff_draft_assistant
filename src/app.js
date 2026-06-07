@@ -190,6 +190,7 @@ function render() {
         ${state.activeView === "draft" ? renderDraftView(ctx) : ""}
         ${state.activeView === "available" ? renderAvailableView(ctx) : ""}
         ${state.activeView === "roster" ? renderRosterView(ctx) : ""}
+        ${state.activeView === "plan" ? renderPlanView(ctx) : ""}
         ${state.activeView === "recap" ? renderRecapView(ctx) : ""}
         ${state.activeView === "teams" ? renderTeamsView() : ""}
       </section>
@@ -239,6 +240,7 @@ function renderTabs() {
     ["draft", "Draft"],
     ["available", "Available"],
     ["roster", "Roster"],
+    ["plan", "Plan"],
     ["recap", "Recap"],
     ["teams", "Teams"]
   ];
@@ -426,6 +428,39 @@ function renderRosterView(ctx) {
       </div>
       ${Object.entries(ctx.myRoster).map(([slot, players]) => renderRosterSlot(slot, players)).join("")}
     </section>
+  `;
+}
+
+function renderPlanView(ctx) {
+  const plan = getDraftPlan(ctx);
+
+  return `
+    <section class="panel plan-panel">
+      <div class="panel-heading">
+        <h2>Draft Plan</h2>
+        <span>Round ${ctx.currentInfo.round}</span>
+      </div>
+      <div class="plan-hero">
+        <span class="label">Current Lean</span>
+        <strong>${plan.currentLean}</strong>
+        <em>${plan.summary}</em>
+      </div>
+      <div class="plan-grid">
+        ${renderPlanBlock("Now", plan.now)}
+        ${renderPlanBlock("Next Rounds", plan.rounds)}
+        ${renderPlanBlock("Roster Targets", plan.targets)}
+        ${renderPlanBlock("Guardrails", plan.guardrails)}
+      </div>
+    </section>
+  `;
+}
+
+function renderPlanBlock(title, items) {
+  return `
+    <article class="plan-block">
+      <h3>${title}</h3>
+      ${items.map((item) => `<p><strong>${item.title}</strong><span>${item.detail}</span></p>`).join("")}
+    </article>
   `;
 }
 
@@ -842,6 +877,108 @@ function getBuildIdentity(picks, roster, counts) {
   else if (counts.RB >= counts.WR + 2) identity.push("Leaning into running back depth.");
 
   return identity.slice(0, 3);
+}
+
+function getDraftPlan(ctx) {
+  const rosterPlayers = Object.values(ctx.myRoster).flat();
+  const counts = getPositionCounts(rosterPlayers.map((player) => ({ player })));
+  const needs = getRosterNeeds(ctx.myRoster);
+  const round = ctx.currentInfo.round;
+  const bestPick = ctx.recommendations[0];
+  const remainingPicks = Math.max(leagueSettings.draftRounds - getRosterCount(ctx.myRoster), 0);
+  const requiredOpenSlots = needs.QB + needs.RB + needs.WR + needs.TE + needs.FLEX + needs.DEF;
+
+  return {
+    currentLean: getPlanLean(bestPick, needs, counts, round),
+    summary: getPlanSummary(counts, needs, round, remainingPicks, requiredOpenSlots),
+    now: getPlanNowItems(ctx, counts, needs),
+    rounds: getRoundPlanItems(round, counts, needs),
+    targets: getRosterTargetItems(counts, needs),
+    guardrails: getPlanGuardrails(counts, needs, round, remainingPicks, requiredOpenSlots)
+  };
+}
+
+function getPlanLean(bestPick, needs, counts, round) {
+  if (!bestPick) return "No board available";
+  if (needs.DEF > 0 && round >= 14) return "DEF must enter the plan";
+  if (counts.WR >= 7) return "Balance away from extra WR";
+  if (counts.RB < 4 && round >= 8) return "Add RB depth";
+  if (needs.WR > 0) return "Fill WR starters";
+  if (needs.RB > 0) return "Fill RB starters";
+  if (needs.TE > 0 && round >= 7) return "Find TE value";
+  if (needs.QB > 0 && round >= 7) return "Find QB value";
+  return `Lean ${bestPick.position}`;
+}
+
+function getPlanSummary(counts, needs, round, remainingPicks, requiredOpenSlots) {
+  if (remainingPicks <= requiredOpenSlots) return "Every remaining pick needs to solve a roster slot.";
+  if (round <= 5) return "Build starters and avoid forcing onesie positions unless value is obvious.";
+  if (round <= 10) return "Finish starters, protect RB/WR depth, and watch tier drops before your next pick.";
+  return "Close required slots, avoid extra QB/TE, and take DEF only when the final rounds arrive.";
+}
+
+function getPlanNowItems(ctx, counts, needs) {
+  const bestPick = ctx.recommendations[0];
+  const items = [];
+  if (bestPick) {
+    items.push({
+      title: bestPick.name,
+      detail: `${bestPick.position} - tier ${bestPick.tier} - ${bestPick.reason}`
+    });
+  }
+  if (needs.WR > 0) items.push({ title: "WR starters open", detail: `${needs.WR} WR slot${needs.WR > 1 ? "s" : ""} still need to be filled.` });
+  if (needs.RB > 0) items.push({ title: "RB starters open", detail: `${needs.RB} RB slot${needs.RB > 1 ? "s" : ""} still need to be filled.` });
+  if (counts.WR >= 6) items.push({ title: "WR depth is high", detail: "Only add another WR if rank/tier/value clearly beat alternatives." });
+  if (counts.RB < 4 && ctx.currentInfo.round >= 8) items.push({ title: "RB depth check", detail: "Try to leave the draft with at least 5 RB if the board cooperates." });
+  return items.slice(0, 4);
+}
+
+function getRoundPlanItems(round, counts, needs) {
+  if (round <= 3) {
+    return [
+      { title: "Rounds 1-3", detail: "Prioritize elite RB/WR. Take elite QB/TE only when the value is clearly there." },
+      { title: "Avoid", detail: "Do not chase DEF or bench QB this early." }
+    ];
+  }
+
+  if (round <= 7) {
+    return [
+      { title: "Rounds 4-7", detail: "Finish core RB/WR starters and start watching QB/TE tier value." },
+      { title: "Target shape", detail: `By round 7, aim near RB 3+, WR 4+, QB ${needs.QB ? "optional" : "done"}, TE ${needs.TE ? "optional" : "done"}.` }
+    ];
+  }
+
+  if (round <= 11) {
+    return [
+      { title: "Rounds 8-11", detail: "Add RB/WR depth. QB/TE are acceptable if value or stack logic says yes." },
+      { title: "Depth balance", detail: `Current depth: RB ${counts.RB}, WR ${counts.WR}. Do not let one side get too thin.` }
+    ];
+  }
+
+  return [
+    { title: "Rounds 12-15", detail: "Close mandatory slots, add upside depth, and take DEF before the end." },
+    { title: "Avoid", detail: "Do not take backup QB/TE unless the value is extreme or your starter is weak." }
+  ];
+}
+
+function getRosterTargetItems(counts, needs) {
+  return [
+    { title: "Ideal final shape", detail: "QB 1, RB 5-6, WR 5-7, TE 1-2, DEF 1." },
+    { title: "Current shape", detail: `QB ${counts.QB}, RB ${counts.RB}, WR ${counts.WR}, TE ${counts.TE}, DEF ${counts.DEF}.` },
+    { title: "Open slots", detail: `QB ${needs.QB}, RB ${needs.RB}, WR ${needs.WR}, TE ${needs.TE}, FLEX ${needs.FLEX}, DEF ${needs.DEF}.` }
+  ];
+}
+
+function getPlanGuardrails(counts, needs, round, remainingPicks, requiredOpenSlots) {
+  const guardrails = [];
+  if (counts.WR >= 7) guardrails.push({ title: "Stop WR drift", detail: "Extra WR must be a clear tier/value win." });
+  if (counts.RB <= 3 && round >= 9) guardrails.push({ title: "RB depth risk", detail: "RB injuries and byes will hurt if depth stays thin." });
+  if (needs.DEF > 0 && round < 13) guardrails.push({ title: "DEF can wait", detail: "Keep taking real roster value until the final rounds." });
+  if (needs.DEF > 0 && round >= 14) guardrails.push({ title: "DEF required", detail: "Do not leave the draft without filling DEF." });
+  if (counts.QB >= 1) guardrails.push({ title: "No QB chase", detail: "A second QB needs extreme value. Let your league overpay." });
+  if (counts.TE >= 1) guardrails.push({ title: "No TE chase", detail: "A second TE needs clear value or flex utility." });
+  if (remainingPicks <= requiredOpenSlots + 1) guardrails.push({ title: "Slot pressure", detail: "Prioritize required roster slots over luxury depth." });
+  return guardrails.slice(0, 4);
 }
 
 function getRecapScore(needs, values, reaches, byes, pickCount) {
