@@ -873,6 +873,16 @@ h2 {
   text-align: center;
 }
 
+.backup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.file-input {
+  display: none;
+}
+
 .team-toolbar {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1039,6 +1049,10 @@ h2 {
 
   .live-filters {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .backup-actions {
+    grid-template-columns: 1fr;
   }
 
   .tabs {

@@ -151,12 +151,62 @@ function exportDraftHistory() {
   if (!state.picks.length) return;
 
   const payload = buildDraftHistoryExport();
+  downloadJson(payload, `ward19-draft-history-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+function backupCurrentDraft() {
+  const payload = {
+    schemaVersion: 1,
+    backupType: "ward19-current-draft-state",
+    exportedAt: new Date().toISOString(),
+    app: {
+      name: "Ward19 Draft Assistant",
+      cacheVersion: "ward19-draft-v33",
+      storageKey: STORAGE_KEY
+    },
+    state: {
+      ...state,
+      editPickIndex: null,
+      editSearch: "",
+      search: ""
+    }
+  };
+
+  downloadJson(payload, `ward19-current-draft-backup-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+function restoreDraftBackup(file) {
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    try {
+      const payload = JSON.parse(String(reader.result || "{}"));
+      if (payload.backupType !== "ward19-current-draft-state" || !payload.state) {
+        alert("That file does not look like a Ward19 current draft backup.");
+        return;
+      }
+
+      const pickCount = Array.isArray(payload.state.picks) ? payload.state.picks.length : 0;
+      if (!confirm(`Restore backup with ${pickCount} pick${pickCount === 1 ? "" : "s"}? This replaces the current draft on this device.`)) return;
+
+      state = normalizeState({ ...defaultState(), ...payload.state, editPickIndex: null, editSearch: "", search: "" });
+      saveState();
+      render();
+    } catch {
+      alert("Could not restore that backup file.");
+    }
+  });
+  reader.readAsText(file);
+}
+
+function downloadJson(payload, fileName) {
   const json = JSON.stringify(payload, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `ward19-draft-history-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = fileName;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -588,7 +638,12 @@ function renderTeamsView() {
         }).join("")}
       </div>
       <div class="export-panel">
+        <div class="backup-actions">
+          <button class="primary-lite" data-action="backup-draft">Backup Current Draft</button>
+          <button class="secondary" data-action="choose-restore">Restore Backup</button>
+        </div>
         <button class="primary-lite" data-action="export-draft" ${state.picks.length ? "" : "disabled"}>Export Draft History</button>
+        <input class="file-input" type="file" accept="application/json,.json" data-input="restore-backup" />
         <span>${state.picks.length ? `${state.picks.length}/${getTotalPicks()} picks ready` : "Enter picks before exporting"}</span>
       </div>
     </section>
@@ -1398,6 +1453,12 @@ function bindEvents() {
   app.querySelector("[data-action='reset']")?.addEventListener("click", resetDraft);
   app.querySelector("[data-action='cancel-edit']")?.addEventListener("click", cancelEditPick);
   app.querySelector("[data-action='export-draft']")?.addEventListener("click", exportDraftHistory);
+  app.querySelector("[data-action='backup-draft']")?.addEventListener("click", backupCurrentDraft);
+  app.querySelector("[data-action='choose-restore']")?.addEventListener("click", () => app.querySelector("[data-input='restore-backup']")?.click());
+  app.querySelector("[data-input='restore-backup']")?.addEventListener("change", (event) => {
+    restoreDraftBackup(event.target.files?.[0]);
+    event.target.value = "";
+  });
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);
   app.querySelector("[data-input='search']")?.addEventListener("input", (event) => {
