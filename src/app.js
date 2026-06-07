@@ -1,10 +1,11 @@
-import { leagueSettings, teamNames } from "./data/leagueSettings.js";
+import { leagueSettings, teamNames as defaultTeamNames } from "./data/leagueSettings.js";
 import { fantasyProsPlayers } from "./data/fantasyProsPlayers.js";
 import { buildRoster, getMyUpcomingPicks, getPickInfo, getRosterCount, getRosterNeeds, getTotalPicks, TOTAL_ROUNDS } from "./logic/draft.js";
 import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/recommendations.js";
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const BOARD_LIMIT = 220;
+const TEAM_ROSTER_TEMPLATE = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST", "BN", "BN", "BN", "BN", "BN", "BN"];
 const app = document.querySelector("#app");
 
 let state = loadState();
@@ -16,6 +17,8 @@ function defaultState() {
     search: "",
     editPickIndex: null,
     editSearch: "",
+    teamNames: defaultTeamNames,
+    teamSort: "roster",
     positionFilter: "ALL",
     activeView: "draft"
   };
@@ -23,10 +26,22 @@ function defaultState() {
 
 function loadState() {
   try {
-    return { ...defaultState(), ...JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") };
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    return normalizeState({ ...defaultState(), ...saved });
   } catch {
     return defaultState();
   }
+}
+
+function normalizeState(nextState) {
+  const savedTeamNames = Array.isArray(nextState.teamNames) ? nextState.teamNames : [];
+  return {
+    ...nextState,
+    teamNames: Array.from({ length: leagueSettings.teams }, (_, index) => {
+      const name = String(savedTeamNames[index] ?? "").trim();
+      return name || defaultTeamNames[index];
+    })
+  };
 }
 
 function saveState() {
@@ -34,7 +49,7 @@ function saveState() {
 }
 
 function setState(nextState) {
-  state = { ...state, ...nextState };
+  state = normalizeState({ ...state, ...nextState });
   saveState();
   render();
 }
@@ -141,9 +156,10 @@ function getCurrentContext() {
   const totalPicks = getTotalPicks();
   const currentInfo = getPickInfo(Math.min(currentPick, totalPicks));
   const myRoster = state.mySlot ? buildRoster(state.picks, state.mySlot) : buildRoster([], 1);
-  const recommendations = recommendPlayers(fantasyProsPlayers, state.picks, myRoster, currentPick);
-  const available = getAvailablePlayers(fantasyProsPlayers, state.picks);
   const upcoming = getMyUpcomingPicks(currentPick, state.mySlot);
+  const nextTargetPick = getRecommendationTargetPick(currentPick, upcoming);
+  const recommendations = recommendPlayers(fantasyProsPlayers, state.picks, myRoster, currentPick, 8, nextTargetPick);
+  const available = getAvailablePlayers(fantasyProsPlayers, state.picks);
   return { currentPick, totalPicks, currentInfo, myRoster, recommendations, available, upcoming };
 }
 
@@ -179,7 +195,7 @@ function renderHeader(ctx) {
       <div class="pick-card">
         <span>Round ${ctx.currentInfo.round}</span>
         <strong>Pick ${Math.min(ctx.currentPick, ctx.totalPicks)}</strong>
-        <small>${teamNames[ctx.currentInfo.teamSlot - 1]} - ${nextPickText}</small>
+        <small>${getTeamName(ctx.currentInfo.teamSlot)} - ${nextPickText}</small>
       </div>
     </header>
   `;
@@ -457,15 +473,45 @@ function renderRecapBlock(title, items) {
 }
 
 function renderTeamsView() {
+  const sortLabel = state.teamSort === "draft" ? "Draft Order" : "Roster";
   return `
+    <section class="panel team-name-panel">
+      <div class="panel-heading">
+        <h2>Team Names</h2>
+        <span>Saved on this device</span>
+      </div>
+      <div class="team-toolbar">
+        <button class="${state.teamSort === "roster" ? "active" : ""}" data-team-sort="roster">Roster</button>
+        <button class="${state.teamSort === "draft" ? "active" : ""}" data-team-sort="draft">Draft Order</button>
+      </div>
+      <div class="team-name-grid">
+        ${state.teamNames.map((name, index) => {
+          const teamSlot = index + 1;
+          return `
+            <label class="team-name-row ${state.mySlot === teamSlot ? "mine" : ""}">
+              <span>${teamSlot}</span>
+              <input data-team-name="${teamSlot}" value="${escapeHtml(name)}" placeholder="Team ${teamSlot}" autocomplete="off" />
+            </label>
+          `;
+        }).join("")}
+      </div>
+    </section>
     <section class="teams-grid">
-      ${teamNames.map((name, index) => {
+      ${state.teamNames.map((name, index) => {
         const teamSlot = index + 1;
         const picks = state.picks.filter((pick) => pick.teamSlot === teamSlot);
+        const rosterRows = getTeamRosterRows(picks);
+        const draftRows = getTeamDraftRows(picks, rosterRows);
+        const rows = state.teamSort === "draft" ? draftRows : rosterRows;
         return `
           <article class="team-card ${state.mySlot === teamSlot ? "mine" : ""}">
-            <h2>${state.mySlot === teamSlot ? "My Team" : name}</h2>
-            ${picks.length ? picks.map((pick) => `<p>${pick.player.name} <span>${pick.player.position}</span></p>`).join("") : "<p class='empty'>No picks yet</p>"}
+            <div class="team-card-heading">
+              <h2>${state.mySlot === teamSlot ? `My Team - ${name}` : name}</h2>
+              <span>${sortLabel}</span>
+            </div>
+            <div class="team-roster">
+              ${rows.length ? rows.map(renderTeamRosterRow).join("") : "<p class='empty'>No picks yet</p>"}
+            </div>
           </article>
         `;
       }).join("")}
@@ -488,7 +534,7 @@ function renderRecentPicks() {
         <div class="pick-row">
           <span>${pick.overallPick}</span>
           <strong>${pick.player.name}</strong>
-          <em>${pick.player.position} - ${teamNames[pick.teamSlot - 1]}${pick.mocked ? " - mocked" : ""}</em>
+          <em>${pick.player.position} - ${getTeamName(pick.teamSlot)}${pick.mocked ? " - mocked" : ""}</em>
           <div class="pick-actions">
             <button class="mini-button" data-edit-pick="${index}">Edit</button>
             <button class="mini-button danger-mini" data-delete-pick="${index}">Delete</button>
@@ -510,7 +556,7 @@ function renderCorrectionPanel(ctx) {
     <section class="panel correction-panel">
       <div class="panel-heading">
         <h2>Correct Pick ${pick.overallPick}</h2>
-        <span>${teamNames[pick.teamSlot - 1]}</span>
+        <span>${getTeamName(pick.teamSlot)}</span>
       </div>
       <div class="correction-current">
         <span>Current</span>
@@ -548,6 +594,58 @@ function renderReplaceRow(player, pickIndex) {
       <span class="meta">Use here</span>
     </button>
   `;
+}
+
+function renderTeamRosterRow(row) {
+  const pick = row.pick;
+  return `
+    <div class="team-roster-row ${pick ? "filled" : ""}">
+      <span class="team-roster-slot">${row.slot}</span>
+      <strong>${pick ? pick.player.name : "Open"}</strong>
+      <em>${pick ? `${pick.player.position} - ${pick.player.team}` : ""}</em>
+      <span class="team-roster-pick">${pick ? formatDraftPickLabel(pick) : "--"}</span>
+    </div>
+  `;
+}
+
+function getTeamRosterRows(picks) {
+  const rows = TEAM_ROSTER_TEMPLATE.map((slot) => ({ slot, pick: null }));
+
+  for (const pick of picks) {
+    const slotIndex = getTeamRosterSlotIndex(rows, pick.player.position);
+    if (slotIndex !== -1) rows[slotIndex].pick = pick;
+  }
+
+  return rows;
+}
+
+function getTeamDraftRows(picks, rosterRows) {
+  return [...picks]
+    .sort((a, b) => a.overallPick - b.overallPick)
+    .map((pick) => {
+      const assignedRow = rosterRows.find((row) => row.pick?.overallPick === pick.overallPick);
+      return {
+        slot: assignedRow?.slot ?? "BN",
+        pick
+      };
+    });
+}
+
+function getTeamRosterSlotIndex(rows, position) {
+  const primarySlot = position === "DEF" ? "DST" : position;
+  const primaryIndex = rows.findIndex((row) => row.slot === primarySlot && !row.pick);
+  if (primaryIndex !== -1) return primaryIndex;
+
+  if (["RB", "WR", "TE"].includes(position)) {
+    const flexIndex = rows.findIndex((row) => row.slot === "FLEX" && !row.pick);
+    if (flexIndex !== -1) return flexIndex;
+  }
+
+  return rows.findIndex((row) => row.slot === "BN" && !row.pick);
+}
+
+function formatDraftPickLabel(pick) {
+  return `R${pick.round} P${pick.pickInRound}`;
 }
 
 function renderPlayerRow(player, meta, canDraft, currentPick = state.picks.length + 1) {
@@ -612,6 +710,12 @@ function isUsefulAdp(adp) {
   return Number.isFinite(number) && number <= leagueSettings.teams * leagueSettings.draftRounds + 12;
 }
 
+function getRecommendationTargetPick(currentPick, upcoming) {
+  if (!upcoming.length) return null;
+  if (upcoming[0] === currentPick) return upcoming[1] ?? null;
+  return upcoming[0];
+}
+
 function getBestPickExplanation(player, ctx) {
   const reasons = [];
   const needs = getRosterNeeds(ctx.myRoster);
@@ -639,9 +743,9 @@ function getDraftRecap(myPicks, roster) {
   const values = getValuePicks(myPicks, "value");
   const reaches = getValuePicks(myPicks, "reach");
   const byes = getByeWatch(myPicks);
-  const nextSteps = getRecapNextSteps(needs, positionCounts, myPicks.length);
+  const nextSteps = getRecapNextSteps(needs, positionCounts, myPicks.length, reaches, byes);
   const identity = getBuildIdentity(myPicks, roster, positionCounts);
-  const gradeScore = getRecapScore(needs, values, reaches, myPicks.length);
+  const gradeScore = getRecapScore(needs, values, reaches, byes, myPicks.length);
 
   return {
     grade: getRecapGrade(gradeScore),
@@ -689,7 +793,7 @@ function getByeWatch(picks) {
     .map(([bye, count]) => `${count} players on bye week ${bye}`);
 }
 
-function getRecapNextSteps(needs, counts, pickCount) {
+function getRecapNextSteps(needs, counts, pickCount, reaches = [], byes = []) {
   const steps = [];
   if (needs.DEF > 0 && leagueSettings.draftRounds - pickCount <= 3) steps.push("Plan DEF before the final pick window closes.");
   if (needs.QB > 0 && pickCount >= 9) steps.push("QB is still open. Stop waiting unless value is ugly.");
@@ -697,6 +801,8 @@ function getRecapNextSteps(needs, counts, pickCount) {
   if (needs.WR > 0) steps.push(`${needs.WR} WR starter slot${needs.WR > 1 ? "s" : ""} still open.`);
   if (counts.RB < 3 && pickCount >= 8) steps.push("RB depth is thin for bye weeks and injuries.");
   if (counts.WR < 4 && pickCount >= 8) steps.push("WR depth is thin for a 3-WR full PPR league.");
+  if (pickCount >= leagueSettings.draftRounds && byes.length) steps.push("Bye week cluster is worth watching after waivers.");
+  if (pickCount >= leagueSettings.draftRounds && reaches.length >= 2) steps.push("A few picks were early by ADP, but roster structure matters more.");
   return steps.slice(0, 3);
 }
 
@@ -710,21 +816,24 @@ function getBuildIdentity(picks, roster, counts) {
   if (firstThree.filter((position) => position === "RB").length >= 2) identity.push("RB-heavy opening with weekly floor.");
   if (eliteQb) identity.push("Elite QB build, so backup QB can wait.");
   if (eliteTe) identity.push("Elite TE build, so backup TE can wait.");
-  if (counts.WR >= counts.RB + 2) identity.push("Leaning into receiver depth.");
-  if (counts.RB >= counts.WR + 2) identity.push("Leaning into running back depth.");
+  if (counts.WR >= 7) identity.unshift("WR-heavy depth build for full PPR.");
+  else if (counts.WR >= counts.RB + 2) identity.push("Leaning into receiver depth.");
+  if (counts.RB >= 6) identity.unshift("RB-heavy depth build.");
+  else if (counts.RB >= counts.WR + 2) identity.push("Leaning into running back depth.");
 
   return identity.slice(0, 3);
 }
 
-function getRecapScore(needs, values, reaches, pickCount) {
-  let score = 78;
+function getRecapScore(needs, values, reaches, byes, pickCount) {
+  let score = pickCount >= leagueSettings.draftRounds ? 84 : 78;
   score += Math.min(values.length * 5, 12);
-  score -= Math.min(reaches.length * 4, 10);
-  if (needs.WR > 0 && pickCount >= 8) score -= 8;
-  if (needs.RB > 0 && pickCount >= 8) score -= 7;
-  if (needs.QB > 0 && pickCount >= 10) score -= 6;
-  if (needs.TE > 0 && pickCount >= 10) score -= 5;
-  if (needs.DEF > 0 && leagueSettings.draftRounds - pickCount <= 2) score -= 5;
+  score -= Math.min(reaches.length * 2, 6);
+  score -= Math.min(byes.length * 2, 4);
+  if (needs.WR > 0 && pickCount >= 8) score -= 10;
+  if (needs.RB > 0 && pickCount >= 8) score -= 9;
+  if (needs.QB > 0 && pickCount >= 10) score -= 8;
+  if (needs.TE > 0 && pickCount >= 10) score -= 7;
+  if (needs.DEF > 0 && leagueSettings.draftRounds - pickCount <= 2) score -= 6;
   return score;
 }
 
@@ -737,6 +846,7 @@ function getRecapGrade(score) {
 
 function getRecapSummary(score, pickCount) {
   if (pickCount < leagueSettings.draftRounds) return "In-progress read based on your picks so far.";
+  if (score >= 88) return "Strong structure with useful value pockets.";
   if (score >= 80) return "This mock has a usable roster shape with manageable weak spots.";
   if (score >= 72) return "The core is workable, but the build needs cleaner depth or value.";
   return "This mock left too many roster problems to feel comfortable.";
@@ -830,21 +940,21 @@ function chooseMockPlayer(available, picks, pickInfo) {
   const needs = getRosterNeeds(roster);
 
   return [...available]
-    .map((player) => ({ player, score: getMockDraftScore(player, needs, pickInfo) }))
+    .map((player) => ({ player, score: getMockDraftScore(player, needs, pickInfo, roster) }))
     .sort((a, b) => b.score - a.score)[0]?.player;
 }
 
-function getMockDraftScore(player, needs, pickInfo) {
+function getMockDraftScore(player, needs, pickInfo, roster) {
   const adp = Number(player.adp);
   const marketPick = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12 ? adp : player.rank;
   const round = pickInfo.round;
+  const qbCount = getMockPositionCount(roster, "QB");
   let score = 500 - marketPick;
 
   if (needs[player.position] > 0) score += 18;
   if (["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0) score += 8;
   if (player.position === "WR") score += 5;
-  if (player.position === "QB" && needs.QB <= 0) score -= 90;
-  if (player.position === "QB" && round <= 3) score -= 16;
+  if (player.position === "QB") score += getMockQbTendencyBonus(qbCount, round, needs);
   if (player.position === "DEF" && needs.DEF <= 0) score -= 120;
   if (player.position === "DEF" && round < 13) score -= 180;
   if (needs.BENCH <= 0 && needs[player.position] <= 0) score -= 80;
@@ -852,6 +962,34 @@ function getMockDraftScore(player, needs, pickInfo) {
   if (player.position === "DEF" && needs.DEF > 0 && round >= 14) score += 260;
 
   return score;
+}
+
+function getMockQbTendencyBonus(qbCount, round, needs) {
+  if (qbCount === 0) {
+    if (round >= 10) return 140;
+    if (round >= 8) return 82;
+    if (round >= 6) return 38;
+    if (round <= 3) return -16;
+    return 0;
+  }
+
+  if (qbCount === 1) {
+    if (needs.BENCH <= 0) return -220;
+    if (round <= 6) return -125;
+    if (round === 7) return -65;
+    if (round === 8) return -20;
+    if (round === 9) return 35;
+    if (round === 10) return 85;
+    if (round === 11) return 125;
+    return 170;
+  }
+
+  if (qbCount === 2) {
+    if (needs.BENCH <= 0) return -240;
+    return round >= 14 ? -75 : -185;
+  }
+
+  return -260;
 }
 
 function getMockRequiredOpenSlots(needs) {
@@ -865,6 +1003,12 @@ function getMockRemainingRosterPicks(needs) {
 function fillsMockRequiredSlot(player, needs) {
   if (needs[player.position] > 0) return true;
   return ["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0;
+}
+
+function getMockPositionCount(roster, position) {
+  return Object.values(roster)
+    .flat()
+    .filter((player) => player.position === position).length;
 }
 
 function getCorrectionPlayers(available, pickIndex, query) {
@@ -883,6 +1027,24 @@ function normalizePicks(picks) {
   }));
 }
 
+function updateTeamName(teamSlot, value) {
+  const names = [...state.teamNames];
+  names[teamSlot - 1] = value.trim() || defaultTeamNames[teamSlot - 1];
+  setState({ teamNames: names });
+}
+
+function saveTeamNameInput(teamSlot, value) {
+  const names = [...state.teamNames];
+  names[teamSlot - 1] = value;
+  state = { ...state, teamNames: names };
+  saveState();
+}
+
+function getTeamName(teamSlot) {
+  const name = String(state.teamNames[teamSlot - 1] ?? "").trim();
+  return name || defaultTeamNames[teamSlot - 1];
+}
+
 function bindEvents() {
   app.querySelectorAll("[data-slot]").forEach((button) => {
     button.addEventListener("click", () => setState({ mySlot: Number(button.dataset.slot) }));
@@ -894,6 +1056,10 @@ function bindEvents() {
 
   app.querySelectorAll("[data-filter]").forEach((button) => {
     button.addEventListener("click", () => setState({ positionFilter: button.dataset.filter }));
+  });
+
+  app.querySelectorAll("[data-team-sort]").forEach((button) => {
+    button.addEventListener("click", () => setState({ teamSort: button.dataset.teamSort }));
   });
 
   app.querySelectorAll("[data-draft]").forEach((button) => {
@@ -910,6 +1076,17 @@ function bindEvents() {
 
   app.querySelectorAll("[data-replace-pick]").forEach((button) => {
     button.addEventListener("click", () => replacePickPlayer(Number(button.dataset.replacePick), button.dataset.replacePlayer));
+  });
+
+  app.querySelectorAll("[data-team-name]").forEach((input) => {
+    input.addEventListener("input", (event) => saveTeamNameInput(Number(event.target.dataset.teamName), event.target.value));
+    input.addEventListener("change", (event) => updateTeamName(Number(event.target.dataset.teamName), event.target.value));
+    input.addEventListener("blur", (event) => updateTeamName(Number(event.target.dataset.teamName), event.target.value));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.currentTarget.blur();
+      }
+    });
   });
 
   app.querySelector("[data-action='undo']")?.addEventListener("click", undoPick);

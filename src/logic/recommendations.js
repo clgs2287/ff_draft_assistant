@@ -30,14 +30,14 @@ export function getAvailablePlayers(players, picks) {
   return players.filter((player) => !draftedIds.has(player.id)).sort((a, b) => a.rank - b.rank);
 }
 
-export function recommendPlayers(players, picks, roster, currentPick, limit = 8) {
+export function recommendPlayers(players, picks, roster, currentPick, limit = 8, nextPick = null) {
   const available = getAvailablePlayers(players, picks);
   const needs = getRosterNeeds(roster);
 
   const ranked = available
     .map((player) => {
-      const score = scorePlayer(player, roster, needs, currentPick, available);
-      return { ...player, score, reason: buildReason(player, roster, needs, currentPick, available) };
+      const score = scorePlayer(player, roster, needs, currentPick, available, nextPick);
+      return { ...player, score, reason: buildReason(player, roster, needs, currentPick, available, nextPick) };
     })
     .sort((a, b) => b.score - a.score);
 
@@ -63,21 +63,25 @@ function limitBackupOnesies(players, roster) {
   });
 }
 
-function scorePlayer(player, roster, needs, currentPick, available) {
-  const rankValue = Math.max(250 - player.rank * 4, 0);
+function scorePlayer(player, roster, needs, currentPick, available, nextPick) {
+  const rankValue = Math.max(270 - player.rank * 2.2, 0);
+  const tierValue = Math.max(13 - Number(player.tier), 0) * 9;
   const positionValue = POSITION_WEIGHTS[player.position] ?? 0;
   const starterNeed = getStarterNeed(player, needs) * 22;
   const flexNeed = ["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0 ? 10 : 0;
   const valueVsAdp = getAdpValueBonus(player, currentPick);
   const tierDrop = getTierDropBonus(player, available);
   const overfillPenalty = getOverfillPenalty(player, roster);
+  const depthBalancePenalty = getDepthBalancePenalty(player, roster);
   const rosterUrgency = getRosterUrgencyBonus(player, roster, needs, currentPick);
   const onesieValueBonus = getBackupOnesieValueBonus(player, roster, currentPick);
   const stackBonus = getStackBonus(player, roster, currentPick);
+  const returnRisk = getReturnRiskBonus(player, currentPick, nextPick);
+  const pathBonus = getNextPickPathBonus(player, roster, needs, available, nextPick);
   const defenseTimingPenalty = player.position === "DEF" && currentPick < leagueSettings.teams * (leagueSettings.rosterSlots.QB + leagueSettings.rosterSlots.RB + leagueSettings.rosterSlots.WR + leagueSettings.rosterSlots.TE + leagueSettings.rosterSlots.FLEX) ? 70 : 0;
   const onesieTimingPenalty = getOnesieTimingPenalty(player, roster, needs, currentPick);
 
-  return rankValue + positionValue + starterNeed + flexNeed + valueVsAdp + tierDrop + rosterUrgency + onesieValueBonus + stackBonus - overfillPenalty - defenseTimingPenalty - onesieTimingPenalty;
+  return rankValue + tierValue + positionValue + starterNeed + flexNeed + valueVsAdp + tierDrop + rosterUrgency + onesieValueBonus + stackBonus + returnRisk + pathBonus - overfillPenalty - depthBalancePenalty - defenseTimingPenalty - onesieTimingPenalty;
 }
 
 function getAdpValueBonus(player, currentPick) {
@@ -87,9 +91,27 @@ function getAdpValueBonus(player, currentPick) {
   if (!Number.isFinite(adp) || adp > maxUsefulAdp) return 0;
 
   const valueGap = currentPick - adp;
-  if (valueGap <= 0) return Math.max(valueGap, -10) * 0.15;
+  if (valueGap <= 0) return Math.max(valueGap, -22) * 0.7;
 
   return Math.min(valueGap, 18) * 0.35;
+}
+
+function getReturnRiskBonus(player, currentPick, nextPick) {
+  if (!nextPick || nextPick <= currentPick) return 0;
+  if (player.position === "DEF") return 0;
+
+  const adp = Number(player.adp);
+  const maxUsefulAdp = leagueSettings.teams * leagueSettings.draftRounds + 12;
+  if (!Number.isFinite(adp) || adp > maxUsefulAdp) return 0;
+
+  const likelyGoneBy = nextPick + 1;
+  if (adp > likelyGoneBy) return 0;
+
+  const riskWindow = Math.max(nextPick - currentPick, 1);
+  const urgency = Math.max(likelyGoneBy - adp, 0);
+  const positionMultiplier = ["RB", "WR"].includes(player.position) ? 1.25 : 0.85;
+
+  return Math.min(urgency / riskWindow, 1.2) * 16 * positionMultiplier;
 }
 
 function getStarterNeed(player, needs) {
@@ -105,6 +127,25 @@ function getOverfillPenalty(player, roster) {
   const positionCount = roster[player.position]?.length ?? 0;
   const slotLimit = leagueSettings.rosterSlots[player.position] ?? 0;
   if (positionCount >= slotLimit && player.position !== "WR") return 12;
+  return 0;
+}
+
+function getDepthBalancePenalty(player, roster) {
+  const rosterPlayers = getRosterPlayers(roster);
+  const wrCount = rosterPlayers.filter((candidate) => candidate.position === "WR").length;
+  const rbCount = rosterPlayers.filter((candidate) => candidate.position === "RB").length;
+
+  if (player.position === "WR") {
+    if (wrCount >= 7) return 44;
+    if (wrCount >= 6 && rbCount <= 4) return 34;
+    if (wrCount >= 6) return 22;
+  }
+
+  if (player.position === "RB") {
+    if (rbCount >= 6) return 18;
+    if (rbCount >= 5 && wrCount <= 4) return 12;
+  }
+
   return 0;
 }
 
@@ -172,6 +213,39 @@ function fillsRequiredRosterSlot(player, needs) {
   return ["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0;
 }
 
+function getNextPickPathBonus(player, roster, needs, available, nextPick) {
+  if (!nextPick || player.position === "DEF") return 0;
+  if (!["RB", "WR", "TE", "QB"].includes(player.position)) return 0;
+  if (!fillsRequiredRosterSlot(player, needs) && !["RB", "WR"].includes(player.position)) return 0;
+
+  const nextSame = getLikelyAvailableAtPick(available, nextPick, player.id)
+    .filter((candidate) => candidate.position === player.position)
+    .sort((a, b) => a.rank - b.rank)[0];
+
+  if (!nextSame) return ["RB", "WR"].includes(player.position) ? 34 : 18;
+
+  const tierGap = Number(nextSame.tier) - Number(player.tier);
+  const rankGap = nextSame.rank - player.rank;
+  if (tierGap <= 0 && rankGap < 14) return 0;
+
+  const positionMultiplier = player.position === "WR" ? 1.25 : player.position === "RB" ? 1.18 : 0.75;
+  const needMultiplier = fillsRequiredRosterSlot(player, needs) ? 1 : 0.55;
+  const tierComponent = Math.max(tierGap, 0) * 15;
+  const rankComponent = Math.min(Math.max(rankGap, 0) / 3, 16);
+
+  return Math.min((tierComponent + rankComponent) * positionMultiplier * needMultiplier, 46);
+}
+
+function getLikelyAvailableAtPick(available, targetPick, excludePlayerId) {
+  return available.filter((player) => {
+    if (player.id === excludePlayerId) return false;
+    const adp = Number(player.adp);
+    const maxUsefulAdp = leagueSettings.teams * leagueSettings.draftRounds + 12;
+    if (!Number.isFinite(adp) || adp > maxUsefulAdp) return true;
+    return adp > targetPick + 1;
+  });
+}
+
 function getTierDropBonus(player, available) {
   const samePosition = available.filter((candidate) => candidate.position === player.position);
   const nextSameTier = samePosition.find((candidate) => candidate.rank > player.rank && candidate.tier === player.tier);
@@ -180,19 +254,23 @@ function getTierDropBonus(player, available) {
   return 0;
 }
 
-function buildReason(player, roster, needs, currentPick, available) {
+function buildReason(player, roster, needs, currentPick, available, nextPick) {
   const reasons = [];
   const stackFit = getStackFit(player, roster, currentPick);
   if (needs[player.position] > 0) reasons.push(`${player.position} starter need`);
   if (["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0 && needs[player.position] === 0) reasons.push("flex eligible");
   if (stackFit) reasons.push(`stack with ${stackFit.name}`);
   if (player.position === "WR") reasons.push("full PPR/3 WR format");
+  if (getReturnRiskBonus(player, currentPick, nextPick) >= 8) reasons.push("unlikely to return");
+  if (getNextPickPathBonus(player, roster, needs, available, nextPick) >= 12) reasons.push("next-pick tier drop");
+  if (getDepthBalancePenalty(player, roster) >= 30) reasons.push("depth balance check");
   if (player.position === "QB" && roster.QB.length === 0) reasons.push("only if value falls");
   if (player.position === "QB" && roster.QB.length > 0) reasons.push("backup QB is low priority");
   if (player.position === "TE" && roster.TE.length > 0) reasons.push("backup TE is low priority");
   if (player.position === "DEF") reasons.push("usually last-round target");
   if (getRosterUrgencyBonus(player, roster, needs, currentPick) >= 180) reasons.push("required roster slot");
   if (getAdpValueBonus(player, currentPick) >= 2.8) reasons.push("value vs ADP");
+  if (getAdpValueBonus(player, currentPick) <= -8) reasons.push("early vs ADP");
   if (getTierDropBonus(player, available) > 0) reasons.push("tier drop after this range");
   return reasons.slice(0, 3).join(" - ") || `Ranked #${player.rank} overall`;
 }

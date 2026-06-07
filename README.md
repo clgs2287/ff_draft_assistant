@@ -15,6 +15,18 @@ Open:
 http://127.0.0.1:5182
 ```
 
+## Phone / Hosted App
+
+GitHub Pages URL:
+
+```text
+https://clgs2287.github.io/ff_draft_assistant/
+```
+
+Open that URL on your iPhone and use Share > Add to Home Screen.
+
+Draft picks, team names, and settings are saved locally on the device you use.
+
 For iPhone testing on the same Wi-Fi, use the computer's local network IP instead of `127.0.0.1`.
 
 Example from the current Wi-Fi network:

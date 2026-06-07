@@ -31,9 +31,9 @@ export function buildRoster(picks, teamSlot) {
   for (const pick of teamPicks) {
     const player = pick.player;
     if (player.position === "DEF") {
-      placePlayer(roster, "DEF", player);
+      if (!placePlayer(roster, "DEF", player)) placeBench(roster, player);
     } else if (player.position === "QB") {
-      placePlayer(roster, "QB", player);
+      if (!placePlayer(roster, "QB", player)) placeBench(roster, player);
     } else if (player.position === "TE") {
       if (!placePlayer(roster, "TE", player)) placeFlexOrBench(roster, player);
     } else if (player.position === "RB") {
@@ -59,6 +59,10 @@ function placeFlexOrBench(roster, player) {
     roster.FLEX.push(player);
     return;
   }
+  placeBench(roster, player);
+}
+
+function placeBench(roster, player) {
   roster.BENCH.push(player);
 }
 
