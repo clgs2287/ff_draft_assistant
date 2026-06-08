@@ -44,7 +44,22 @@ export function recommendPlayers(players, picks, roster, currentPick, limit = 8,
     })
     .sort((a, b) => b.score - a.score);
 
-  return limitBackupOnesies(ranked, roster).slice(0, limit);
+  return limitDefenseRecommendations(limitBackupOnesies(ranked, roster), needs, currentPick).slice(0, limit);
+}
+
+function limitDefenseRecommendations(players, needs, currentPick) {
+  if (needs.DEF <= 0) return players.filter((player) => player.position !== "DEF");
+  if (isFinalDraftRound(currentPick)) {
+    const defenses = players.filter((player) => player.position === "DEF");
+    return defenses.length ? defenses : players;
+  }
+
+  let defenseShown = 0;
+  return players.filter((player) => {
+    if (player.position !== "DEF") return true;
+    defenseShown += 1;
+    return defenseShown <= 1;
+  });
 }
 
 function limitBackupOnesies(players, roster) {
@@ -252,6 +267,12 @@ function getRosterUrgencyBonus(player, roster, needs, currentPick) {
   const requiredOpenSlots = needs.QB + needs.RB + needs.WR + needs.TE + needs.FLEX + needs.DEF;
   const fillsRequiredSlot = fillsRequiredRosterSlot(player, needs);
 
+  if (player.position === "DEF" && needs.DEF > 0) {
+    if (isFinalDraftRound(currentPick)) return 420;
+    if (getDraftRound(currentPick) >= leagueSettings.draftRounds - 1) return 70;
+    return 0;
+  }
+
   if (!fillsRequiredSlot) {
     return remainingRosterPicks <= requiredOpenSlots ? -140 : 0;
   }
@@ -260,12 +281,15 @@ function getRosterUrgencyBonus(player, roster, needs, currentPick) {
   if (remainingRosterPicks <= requiredOpenSlots) bonus += 220;
   if (remainingRosterPicks <= requiredOpenSlots + 1) bonus += 100;
 
-  if (player.position === "DEF" && needs.DEF > 0) {
-    if (remainingRosterPicks <= 3) bonus += 180;
-    if (currentPick >= leagueSettings.teams * (leagueSettings.draftRounds - 2)) bonus += 120;
-  }
-
   return bonus;
+}
+
+function getDraftRound(currentPick) {
+  return Math.max(1, Math.ceil(currentPick / leagueSettings.teams));
+}
+
+function isFinalDraftRound(currentPick) {
+  return getDraftRound(currentPick) >= leagueSettings.draftRounds;
 }
 
 function fillsRequiredRosterSlot(player, needs) {
