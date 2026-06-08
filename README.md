@@ -39,6 +39,7 @@ http://192.168.4.38:5190
 
 - Ward19 league settings baked in
 - FantasyPros 2026 draft rankings loaded from CSV
+- Draft Sharks PPR rankings blended into quality rank with slightly higher weight than FantasyPros
 - Beat ADP merged for consensus, Sleeper, ESPN, Yahoo, Underdog, and FantasyPros ADP fields where player/team match
 - 12-team, 15-round snake draft
 - Flexible draft slot selector
@@ -57,12 +58,13 @@ http://192.168.4.38:5190
 From the app, open Teams > Rankings Data:
 
 - Import Rankings CSV for a fresh FantasyPros draft rankings export.
+- Import Draft Sharks CSV for a fresh Draft Sharks PPR rankings export.
 - Import ADP CSV for a fresh Beat ADP export.
 - Use Bundled Data to reset back to the checked-in data.
 
 The imported player pool is saved locally on that device and is included in current draft backups.
 
-For a checked-in data refresh from the computer, refresh the FantasyPros and Beat ADP CSVs closer to draft day, then run:
+For a checked-in data refresh from the computer, refresh the FantasyPros, Beat ADP, and Draft Sharks CSVs closer to draft day, then run:
 
 ```powershell
 node scripts\merge-rankings.mjs

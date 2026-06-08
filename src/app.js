@@ -5,7 +5,9 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v37";
+const APP_CACHE_VERSION = "ward19-draft-v38";
+const DRAFT_SHARKS_WEIGHT = 0.55;
+const FANTASYPROS_WEIGHT = 0.45;
 const BOARD_LIMIT = 220;
 const TEAM_ROSTER_TEMPLATE = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST", "BN", "BN", "BN", "BN", "BN", "BN"];
 const TEAM_CODES = [
@@ -260,7 +262,9 @@ function importFantasyProsRankings(file) {
       }
 
       const beatAdpRows = playerData?.beatAdpRows ?? [];
-      const { players, matched } = mergePlayersWithBeatAdp(rankingPlayers, beatAdpRows);
+      const draftSharksRows = playerData?.draftSharksRows ?? [];
+      const draftSharksMerge = mergePlayersWithDraftSharks(rankingPlayers, draftSharksRows);
+      const beatAdpMerge = mergePlayersWithBeatAdp(draftSharksMerge.players, beatAdpRows);
       savePlayerData({
         schemaVersion: 1,
         importedAt: new Date().toISOString(),
@@ -268,14 +272,19 @@ function importFantasyProsRankings(file) {
         rankingsImportedAt: new Date().toISOString(),
         beatAdpFileName: playerData?.beatAdpFileName ?? null,
         beatAdpImportedAt: playerData?.beatAdpImportedAt ?? null,
+        draftSharksFileName: playerData?.draftSharksFileName ?? null,
+        draftSharksImportedAt: playerData?.draftSharksImportedAt ?? null,
         rankingCount: rankingPlayers.length,
         beatAdpCount: beatAdpRows.length,
-        matchedBeatAdp: matched,
+        draftSharksCount: draftSharksRows.length,
+        matchedBeatAdp: beatAdpMerge.matched,
+        matchedDraftSharks: draftSharksMerge.matched,
         rankingPlayers,
         beatAdpRows,
-        players
+        draftSharksRows,
+        players: beatAdpMerge.players
       });
-      alert(`Imported ${players.length} ranked players${beatAdpRows.length ? ` and matched ${matched} Beat ADP rows` : ""}.`);
+      alert(`Imported ${beatAdpMerge.players.length} ranked players${draftSharksRows.length ? `, matched ${draftSharksMerge.matched} Draft Sharks rows` : ""}${beatAdpRows.length ? `, and matched ${beatAdpMerge.matched} Beat ADP rows` : ""}.`);
     } catch {
       alert("Could not import that FantasyPros rankings CSV.");
     }
@@ -293,8 +302,10 @@ function importBeatAdp(file) {
         return;
       }
 
-      const basePlayers = playerData?.rankingPlayers?.length ? playerData.rankingPlayers : fantasyProsPlayers;
-      const { players, matched } = mergePlayersWithBeatAdp(basePlayers, beatAdpRows);
+      const basePlayers = getBaseRankingPlayers();
+      const draftSharksRows = playerData?.draftSharksRows ?? [];
+      const draftSharksMerge = mergePlayersWithDraftSharks(basePlayers, draftSharksRows);
+      const beatAdpMerge = mergePlayersWithBeatAdp(draftSharksMerge.players, beatAdpRows);
       savePlayerData({
         schemaVersion: 1,
         importedAt: new Date().toISOString(),
@@ -302,16 +313,62 @@ function importBeatAdp(file) {
         rankingsImportedAt: playerData?.rankingsImportedAt ?? null,
         beatAdpFileName: file.name,
         beatAdpImportedAt: new Date().toISOString(),
+        draftSharksFileName: playerData?.draftSharksFileName ?? null,
+        draftSharksImportedAt: playerData?.draftSharksImportedAt ?? null,
         rankingCount: basePlayers.length,
         beatAdpCount: beatAdpRows.length,
-        matchedBeatAdp: matched,
+        draftSharksCount: draftSharksRows.length,
+        matchedBeatAdp: beatAdpMerge.matched,
+        matchedDraftSharks: draftSharksMerge.matched,
         rankingPlayers: basePlayers,
         beatAdpRows,
-        players
+        draftSharksRows,
+        players: beatAdpMerge.players
       });
-      alert(`Imported ${beatAdpRows.length} Beat ADP rows and matched ${matched} players.`);
+      alert(`Imported ${beatAdpRows.length} Beat ADP rows and matched ${beatAdpMerge.matched} players.`);
     } catch {
       alert("Could not import that Beat ADP CSV.");
+    }
+  });
+}
+
+function importDraftSharksRankings(file) {
+  if (!file) return;
+
+  readTextFile(file, (text) => {
+    try {
+      const draftSharksRows = loadDraftSharksRowsFromCsv(text);
+      if (!draftSharksRows.length) {
+        alert("No usable Draft Sharks rows were found in that CSV.");
+        return;
+      }
+
+      const basePlayers = getBaseRankingPlayers();
+      const beatAdpRows = playerData?.beatAdpRows ?? [];
+      const draftSharksMerge = mergePlayersWithDraftSharks(basePlayers, draftSharksRows);
+      const beatAdpMerge = mergePlayersWithBeatAdp(draftSharksMerge.players, beatAdpRows);
+      savePlayerData({
+        schemaVersion: 1,
+        importedAt: new Date().toISOString(),
+        rankingsFileName: playerData?.rankingsFileName ?? "Bundled FantasyPros rankings",
+        rankingsImportedAt: playerData?.rankingsImportedAt ?? null,
+        beatAdpFileName: playerData?.beatAdpFileName ?? null,
+        beatAdpImportedAt: playerData?.beatAdpImportedAt ?? null,
+        draftSharksFileName: file.name,
+        draftSharksImportedAt: new Date().toISOString(),
+        rankingCount: basePlayers.length,
+        beatAdpCount: beatAdpRows.length,
+        draftSharksCount: draftSharksRows.length,
+        matchedBeatAdp: beatAdpMerge.matched,
+        matchedDraftSharks: draftSharksMerge.matched,
+        rankingPlayers: basePlayers,
+        beatAdpRows,
+        draftSharksRows,
+        players: beatAdpMerge.players
+      });
+      alert(`Imported ${draftSharksRows.length} Draft Sharks rows and matched ${draftSharksMerge.matched} players.`);
+    } catch {
+      alert("Could not import that Draft Sharks CSV.");
     }
   });
 }
@@ -398,6 +455,103 @@ function loadBeatAdpRowsFromCsv(text) {
     .filter((row) => row.name && row.team);
 }
 
+function loadDraftSharksRowsFromCsv(text) {
+  return parseCsv(text)
+    .slice(1)
+    .map((cells) => {
+      const rank = parseNumber(cells[0]);
+      const team = normalizeTeam(cells[1]);
+      const name = String(cells[2] ?? "").trim();
+      const position = cells[3] === "DST" ? "DEF" : String(cells[3] ?? "").trim();
+
+      if (!rank || !name || !position || position === "K") return null;
+
+      return {
+        draftSharksRank: rank,
+        name,
+        team,
+        position,
+        draftSharksGames: parseNumber(cells[4]),
+        draftSharksAdp: parseNumber(cells[5]),
+        draftSharksBye: parseNumber(cells[6]),
+        draftSharksSos: parseNumber(String(cells[7] ?? "").replace("%", "")),
+        draftSharksInjuryRisk: parseNumber(String(cells[8] ?? "").replace("%", "")),
+        draftSharksFloor: parseNumber(cells[9]),
+        draftSharksConsensusProjection: parseNumber(cells[10]),
+        draftSharksProjection: parseNumber(cells[11]),
+        draftSharksCeiling: parseNumber(cells[12]),
+        draftSharks3dValue: parseNumber(cells[13])
+      };
+    })
+    .filter(Boolean);
+}
+
+function getBaseRankingPlayers() {
+  if (playerData?.rankingPlayers?.length) return playerData.rankingPlayers;
+  return fantasyProsPlayers.map(stripToBaseRankingPlayer);
+}
+
+function stripToBaseRankingPlayer(player) {
+  const {
+    draftSharksRank,
+    draftSharksAdp,
+    draftSharksGames,
+    draftSharksBye,
+    draftSharksSos,
+    draftSharksInjuryRisk,
+    draftSharksFloor,
+    draftSharksConsensusProjection,
+    draftSharksProjection,
+    draftSharksCeiling,
+    draftSharks3dValue,
+    ...base
+  } = player;
+  const rank = player.fantasyProsRank ?? player.rank;
+
+  return {
+    ...base,
+    rank,
+    fantasyProsRank: rank,
+    compositeRank: rank
+  };
+}
+
+function mergePlayersWithDraftSharks(players, draftSharksRows) {
+  const draftSharksByKey = new Map(draftSharksRows.map((row) => [playerKey(row.name, row.team), row]));
+  let matched = 0;
+  const mergedPlayers = players.map((player) => {
+    const fantasyProsRank = player.fantasyProsRank ?? player.rank;
+    const draftSharks = draftSharksByKey.get(playerKey(player.name, player.team));
+    if (!draftSharks) {
+      return {
+        ...stripToBaseRankingPlayer(player),
+        fantasyProsRank,
+        compositeRank: fantasyProsRank
+      };
+    }
+
+    matched += 1;
+    return {
+      ...stripToBaseRankingPlayer(player),
+      fantasyProsRank,
+      compositeRank: (draftSharks.draftSharksRank * DRAFT_SHARKS_WEIGHT) + (fantasyProsRank * FANTASYPROS_WEIGHT),
+      draftSharksRank: draftSharks.draftSharksRank,
+      draftSharksAdp: draftSharks.draftSharksAdp,
+      draftSharksGames: draftSharks.draftSharksGames,
+      draftSharksBye: draftSharks.draftSharksBye,
+      draftSharksSos: draftSharks.draftSharksSos,
+      draftSharksInjuryRisk: draftSharks.draftSharksInjuryRisk,
+      draftSharksFloor: draftSharks.draftSharksFloor,
+      draftSharksConsensusProjection: draftSharks.draftSharksConsensusProjection,
+      draftSharksProjection: draftSharks.draftSharksProjection,
+      draftSharksCeiling: draftSharks.draftSharksCeiling,
+      draftSharks3dValue: draftSharks.draftSharks3dValue
+    };
+  });
+
+  return { players: applyCompositeRanks(mergedPlayers), matched };
+}
+
 function mergePlayersWithBeatAdp(players, beatAdpRows) {
   const beatAdpByKey = new Map(beatAdpRows.map((row) => [playerKey(row.name, row.team), row]));
   let matched = 0;
@@ -427,6 +581,20 @@ function mergePlayersWithBeatAdp(players, beatAdpRows) {
   });
 
   return { players: mergedPlayers, matched };
+}
+
+function applyCompositeRanks(players) {
+  const positionCounts = {};
+  return [...players]
+    .sort((a, b) => (a.compositeRank ?? a.rank) - (b.compositeRank ?? b.rank))
+    .map((player, index) => {
+      positionCounts[player.position] = (positionCounts[player.position] ?? 0) + 1;
+      return {
+        ...player,
+        rank: index + 1,
+        positionalRank: positionCounts[player.position]
+      };
+    });
 }
 
 function parseCsv(text) {
@@ -480,7 +648,10 @@ function parseNumber(value) {
 }
 
 function normalizeTeam(team) {
-  return String(team ?? "").trim() === "JAC" ? "JAX" : String(team ?? "").trim();
+  const code = String(team ?? "").trim();
+  if (code === "JAC") return "JAX";
+  if (code === "LVR") return "LV";
+  return code;
 }
 
 function nameKey(name) {
@@ -572,12 +743,14 @@ function getPlayerDataStatus() {
   }
 
   const rankings = playerData.rankingsFileName || "Imported rankings";
+  const draftSharks = playerData.draftSharksFileName ? `Draft Sharks: ${playerData.draftSharksFileName}` : "No imported Draft Sharks file";
   const adp = playerData.beatAdpFileName ? `ADP: ${playerData.beatAdpFileName}` : "No imported ADP file";
   const matched = Number(playerData.matchedBeatAdp ?? 0);
+  const draftSharksMatched = Number(playerData.matchedDraftSharks ?? 0);
   return {
     label: "Imported",
     title: `${playerData.players.length} active players`,
-    detail: `${rankings}. ${adp}. ${matched} ADP matches.`
+    detail: `${rankings}. ${draftSharks}. ${draftSharksMatched} Draft Sharks matches. ${adp}. ${matched} ADP matches.`
   };
 }
 
@@ -1008,10 +1181,12 @@ function renderDataImportPanel() {
       </div>
       <div class="data-actions">
         <button class="primary-lite" data-action="choose-rankings-import">Import Rankings CSV</button>
+        <button class="secondary" data-action="choose-draft-sharks-import">Import Draft Sharks CSV</button>
         <button class="secondary" data-action="choose-adp-import">Import ADP CSV</button>
         <button class="secondary" data-action="reset-player-data" ${playerData ? "" : "disabled"}>Use Bundled Data</button>
       </div>
       <input class="file-input" type="file" accept=".csv,text/csv" data-input="rankings-import" />
+      <input class="file-input" type="file" accept=".csv,text/csv" data-input="draft-sharks-import" />
       <input class="file-input" type="file" accept=".csv,text/csv" data-input="adp-import" />
       <div class="data-status">
         <strong>${status.title}</strong>
@@ -1159,6 +1334,7 @@ function renderPlayerRow(player, meta, canDraft, currentPick = state.picks.lengt
         <em>${player.position} - ${player.team} - Tier ${player.tier}</em>
         <span class="player-stats">
           <span>Rank ${player.rank}</span>
+          ${player.draftSharksRank ? `<span>DS ${player.draftSharksRank}</span>` : ""}
           <span>ADP ${formatAdp(player.adp)}</span>
           <span class="${getValueClass(player, currentPick)}">${formatValue(player, currentPick)}</span>
         </span>
@@ -1714,6 +1890,11 @@ function serializePlayer(player) {
     team: player.team,
     bye: player.bye,
     rank: player.rank,
+    fantasyProsRank: player.fantasyProsRank,
+    compositeRank: player.compositeRank,
+    draftSharksRank: player.draftSharksRank,
+    draftSharksProjection: player.draftSharksProjection,
+    draftSharks3dValue: player.draftSharks3dValue,
     tier: player.tier,
     positionalRank: player.positionalRank,
     adp: player.adp,
@@ -1843,6 +2024,11 @@ function bindEvents() {
   app.querySelector("[data-action='choose-adp-import']")?.addEventListener("click", () => app.querySelector("[data-input='adp-import']")?.click());
   app.querySelector("[data-input='adp-import']")?.addEventListener("change", (event) => {
     importBeatAdp(event.target.files?.[0]);
+    event.target.value = "";
+  });
+  app.querySelector("[data-action='choose-draft-sharks-import']")?.addEventListener("click", () => app.querySelector("[data-input='draft-sharks-import']")?.click());
+  app.querySelector("[data-input='draft-sharks-import']")?.addEventListener("change", (event) => {
+    importDraftSharksRankings(event.target.files?.[0]);
     event.target.value = "";
   });
   app.querySelector("[data-action='reset-player-data']")?.addEventListener("click", resetImportedPlayerData);
