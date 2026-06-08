@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v47";
+const APP_CACHE_VERSION = "ward19-draft-v48";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -147,12 +147,69 @@ function draftPlayer(playerId) {
   const player = getPlayerPool().find((candidate) => candidate.id === playerId);
   if (!player) return;
   const pickInfo = getPickInfo(state.picks.length + 1);
+  const warnings = getDraftMistakeWarnings(player, pickInfo);
+  if (warnings.length && !confirm(`Draft ${player.name} anyway?\n\n${warnings.map((warning) => `- ${warning}`).join("\n")}`)) return;
+
   setState({
     picks: [...state.picks, { ...pickInfo, player }],
     search: "",
     editPickIndex: null,
     editSearch: ""
   });
+}
+
+function getDraftMistakeWarnings(player, pickInfo) {
+  const roster = buildRoster(state.picks, pickInfo.teamSlot);
+  const needs = getRosterNeeds(roster);
+  const rosterPlayers = Object.values(roster).flat();
+  const counts = getPositionCounts(rosterPlayers.map((candidate) => ({ player: candidate })));
+  const drafted = getRosterCount(roster);
+  const remainingRosterPicks = Math.max(leagueSettings.draftRounds - drafted, 0);
+  const requiredOpenSlots = needs.QB + needs.RB + needs.WR + needs.TE + needs.FLEX + needs.DEF;
+  const round = pickInfo.round;
+  const warnings = [];
+  const valueGap = getValueGap(player, pickInfo.overallPick);
+
+  if (valueGap !== null && valueGap <= -18) {
+    warnings.push(`${Math.round(Math.abs(valueGap))} picks early by ADP.`);
+  }
+
+  if (player.position === "DEF" && needs.DEF <= 0) {
+    warnings.push("This team already has a defense.");
+  } else if (player.position === "DEF" && round < leagueSettings.draftRounds - 1) {
+    warnings.push("Defense is usually a final-round pick.");
+  }
+
+  if (player.position === "QB" && roster.QB.length > 0 && round < 13) {
+    const starter = roster.QB[0];
+    const eliteStarter = Number(starter?.positionalRank) <= 5;
+    warnings.push(eliteStarter ? `Backup QB is very low priority after drafting ${starter.name}.` : "Second QB is usually a late luxury pick.");
+  }
+
+  if (player.position === "TE" && roster.TE.length > 0 && round < 13) {
+    const starter = roster.TE[0];
+    const eliteStarter = Number(starter?.positionalRank) <= 5;
+    warnings.push(eliteStarter ? `Backup TE is very low priority after drafting ${starter.name}.` : "Second TE is usually a late luxury pick.");
+  }
+
+  if (player.position === "WR" && counts.WR >= 7) {
+    warnings.push("This would be an 8th WR.");
+  }
+
+  if (player.position === "RB" && counts.RB >= 6) {
+    warnings.push("This would be a 7th RB.");
+  }
+
+  if (!fillsOpenRosterSlot(player, needs) && remainingRosterPicks <= requiredOpenSlots + 1) {
+    warnings.push("Required roster slots are almost out of time.");
+  }
+
+  return warnings.slice(0, 3);
+}
+
+function fillsOpenRosterSlot(player, needs) {
+  if (needs[player.position] > 0) return true;
+  return ["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0;
 }
 
 function autoDraftNextPick() {
