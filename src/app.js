@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v53";
+const APP_CACHE_VERSION = "ward19-draft-v54";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1134,7 +1134,7 @@ function resetDraft() {
   setState({ ...defaultState(), mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamProfiles: state.teamProfiles, teamSort: state.teamSort });
 }
 
-function runDraftLab(mockCount = 25) {
+function runDraftLab(mockCount = 100) {
   if (!state.mySlot) return;
 
   const runs = Array.from({ length: mockCount }, () => runSingleDraftLabMock());
@@ -1817,7 +1817,7 @@ function renderDraftLabView() {
           <strong>${result ? `${result.mockCount} mocks` : "No batch yet"}</strong>
           <em>${state.mySlot ? "Runs auto-drafts using current strategy and team profiles." : "Choose your draft slot first."}</em>
         </div>
-        <button class="primary-lite" data-action="run-draft-lab" ${state.mySlot ? "" : "disabled"}>Run 25 Mocks</button>
+        <button class="primary-lite" data-action="run-draft-lab" ${state.mySlot ? "" : "disabled"}>Run 100 Mocks</button>
       </div>
       ${result ? renderDraftLabResult(result) : "<p class='empty'>Run a batch to see common builds, players, and weak spots.</p>"}
     </section>
@@ -3062,7 +3062,7 @@ function bindEvents() {
   app.querySelector("[data-action='reset-player-data']")?.addEventListener("click", resetImportedPlayerData);
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);
-  app.querySelector("[data-action='run-draft-lab']")?.addEventListener("click", () => runDraftLab(25));
+  app.querySelector("[data-action='run-draft-lab']")?.addEventListener("click", () => runDraftLab(100));
   app.querySelector("[data-input='search']")?.addEventListener("input", (event) => {
     state.search = event.target.value;
     saveState();
