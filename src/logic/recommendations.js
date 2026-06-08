@@ -358,6 +358,7 @@ function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode)
   const wrCount = rosterPlayers.filter((candidate) => candidate.position === "WR").length;
   const valueGap = getAdpValueGap(player, currentPick);
   const isValue = valueGap !== null && valueGap >= 8;
+  const isMajorValue = valueGap !== null && valueGap >= 14;
   const isReach = valueGap !== null && valueGap <= -8;
 
   if (strategyMode === "wr-heavy") {
@@ -368,8 +369,11 @@ function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode)
 
   if (strategyMode === "hero-rb") {
     if (player.position === "RB" && rbCount === 0 && round <= 3) return 18;
-    if (player.position === "RB" && rbCount >= 2 && round <= 8 && !isValue) return -14;
-    if (player.position === "WR" && rbCount >= 1 && wrCount < 6) return 12;
+    if (player.position === "RB" && rbCount >= 1 && round >= 3 && round <= 8 && !isMajorValue) return -22;
+    if (player.position === "RB" && rbCount >= 2 && round <= 8 && !isMajorValue) return -32;
+    if (player.position === "WR" && rbCount >= 1 && wrCount < 6 && round <= 8) return 20;
+    if (player.position === "WR" && rbCount >= 1 && wrCount < 7) return 10;
+    if (player.position === "RB" && rbCount < 4 && round >= 9) return 8;
     return 0;
   }
 
