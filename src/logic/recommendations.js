@@ -11,6 +11,7 @@ const POSITION_WEIGHTS = {
 const STRATEGY_MODES = new Set(["balanced", "wr-heavy", "hero-rb", "elite-onesie", "value-only"]);
 const ELITE_ONESIE_RANK = 5;
 const BACKUP_ONESIE_VALUE_GAP = 10;
+const EXTREME_BACKUP_ONESIE_VALUE_GAP = 22;
 const STACK_REACH_LIMIT = -14;
 const STACK_SOFT_REACH_LIMIT = -8;
 const PASS_FIRST_STACK_QBS = new Set([
@@ -44,7 +45,7 @@ export function recommendPlayers(players, picks, roster, currentPick, limit = 8,
     })
     .sort((a, b) => b.score - a.score);
 
-  return limitDefenseRecommendations(limitBackupOnesies(ranked, roster), needs, currentPick).slice(0, limit);
+  return limitDefenseRecommendations(limitBackupOnesies(ranked, roster, needs, currentPick), needs, currentPick).slice(0, limit);
 }
 
 function limitDefenseRecommendations(players, needs, currentPick) {
@@ -62,23 +63,28 @@ function limitDefenseRecommendations(players, needs, currentPick) {
   });
 }
 
-function limitBackupOnesies(players, roster) {
+function limitBackupOnesies(players, roster, needs, currentPick) {
   let backupQbs = 0;
   let backupTes = 0;
 
   return players.filter((player) => {
     if (player.position === "QB" && roster.QB.length > 0) {
       backupQbs += 1;
-      return backupQbs <= 1;
+      return backupQbs <= 1 && isBackupQbWorthShowing(player, needs, currentPick);
     }
 
     if (player.position === "TE" && roster.TE.length > 0) {
+      if (roster.TE.length >= 2) return false;
       backupTes += 1;
-      return backupTes <= 2;
+      return backupTes <= 1;
     }
 
     return true;
   });
+}
+
+function isBackupQbWorthShowing(player, needs, currentPick) {
+  return false;
 }
 
 function scorePlayer(player, roster, needs, currentPick, available, nextPick, strategyMode = "balanced") {
@@ -237,7 +243,10 @@ function getOnesieTimingPenalty(player, roster, needs, currentPick) {
   const valueGap = getAdpValueGap(player, currentPick);
 
   if (remainingRosterPicks <= requiredOpenSlots) return 260;
-  if (hasEliteStarter && !finalRoundsStarted) return 260;
+  if (player.position === "QB" && !finalRoundsStarted) return 280;
+  if (player.position === "TE" && roster.TE.length >= 2) return 320;
+  if (player.position === "TE" && !finalRoundsStarted && (valueGap === null || valueGap < EXTREME_BACKUP_ONESIE_VALUE_GAP)) return 180;
+  if (hasEliteStarter && !finalRoundsStarted) return 280;
   if (hasEliteStarter) return 150;
   if (!finalRoundsStarted && (valueGap === null || valueGap < BACKUP_ONESIE_VALUE_GAP)) return 150;
 
@@ -252,10 +261,11 @@ function getBackupOnesieValueBonus(player, roster, currentPick) {
   const hasEliteStarter = Number(starter?.positionalRank) <= ELITE_ONESIE_RANK;
   const valueGap = getAdpValueGap(player, currentPick);
 
-  if (hasEliteStarter || valueGap === null || valueGap < BACKUP_ONESIE_VALUE_GAP) return 0;
+  const requiredGap = player.position === "TE" && roster.TE.length > 0 ? EXTREME_BACKUP_ONESIE_VALUE_GAP : BACKUP_ONESIE_VALUE_GAP;
+  if (hasEliteStarter || valueGap === null || valueGap < requiredGap) return 0;
 
-  const cap = player.position === "TE" ? 20 : 18;
-  const multiplier = player.position === "TE" ? 6 : 4;
+  const cap = player.position === "TE" ? 14 : 12;
+  const multiplier = player.position === "TE" ? 3 : 2;
 
   return Math.min(valueGap, cap) * multiplier;
 }

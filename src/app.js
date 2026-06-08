@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v49";
+const APP_CACHE_VERSION = "ward19-draft-v50";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1195,6 +1195,7 @@ function summarizeDraftLabRuns(runs) {
     topFirstFive: topCounts(firstFive, 4),
     topPlayers: topCounts(landedPlayers, 10),
     qbTiming: getDraftLabQbTiming(runs),
+    teTiming: getDraftLabTeTiming(runs),
     thinFlags
   };
 }
@@ -1216,6 +1217,28 @@ function getDraftLabQbTiming(runs) {
     backupQbCount: runs.filter((run) => run.counts.QB >= 2).length,
     eliteImpact: getDraftLabBuildImpact(eliteQbRuns),
     nonEliteImpact: getDraftLabBuildImpact(nonEliteQbRuns)
+  };
+}
+
+function getDraftLabTeTiming(runs) {
+  const firstTes = runs
+    .map((run) => run.myPicks.find((pick) => pick.player.position === "TE"))
+    .filter(Boolean);
+  const eliteTeRuns = runs.filter((run) => run.myPicks.some((pick) => pick.player.position === "TE" && Number(pick.player.positionalRank) <= 5));
+  const multipleTeRuns = runs.filter((run) => run.counts.TE >= 2);
+  const threeTeRuns = runs.filter((run) => run.counts.TE >= 3);
+  const roundCounts = countBy(firstTes, (pick) => `Round ${pick.round}`);
+  const frequentTes = countBy(runs.flatMap((run) => run.myPicks.filter((pick) => pick.player.position === "TE").map((pick) => pick.player.name)), (name) => name);
+
+  return {
+    firstTeRounds: topCounts(roundCounts, 4),
+    avgFirstTeRound: average(firstTes.map((pick) => pick.round)),
+    eliteTeCount: eliteTeRuns.length,
+    backupTeCount: multipleTeRuns.length,
+    threeTeCount: threeTeRuns.length,
+    topTes: topCounts(frequentTes, 3),
+    eliteImpact: getDraftLabBuildImpact(eliteTeRuns),
+    nonEliteImpact: getDraftLabBuildImpact(runs.filter((run) => !eliteTeRuns.includes(run)))
   };
 }
 
@@ -1812,6 +1835,7 @@ function renderDraftLabResult(result) {
       ${renderLabBlock("Common Starts", result.topFirstFive.map((item) => `${item.count}x - ${item.label}`))}
       ${renderLabBlock("Frequent Players", result.topPlayers.slice(0, 6).map((item) => `${item.label} - ${item.count}x`))}
       ${renderLabBlock("QB Timing", getDraftLabQbTimingItems(result))}
+      ${renderLabBlock("TE Timing", getDraftLabTeTimingItems(result))}
       ${renderLabBlock("Thin Spots", getDraftLabThinSpotItems(result))}
     </div>
   `;
@@ -1850,6 +1874,24 @@ function getDraftLabQbTimingItems(result) {
   if (timing.firstQbRounds?.length) items.push(`First QB rounds: ${timing.firstQbRounds.map((item) => `${item.label} ${item.count}x`).join(", ")}`);
   if (timing.eliteImpact) items.push(`Elite QB build: ${Math.round(timing.eliteImpact.avgScore)} score, RB ${formatOneDecimal(timing.eliteImpact.avgRb)}, WR ${formatOneDecimal(timing.eliteImpact.avgWr)}`);
   if (timing.nonEliteImpact) items.push(`Non-elite QB build: ${Math.round(timing.nonEliteImpact.avgScore)} score, RB ${formatOneDecimal(timing.nonEliteImpact.avgRb)}, WR ${formatOneDecimal(timing.nonEliteImpact.avgWr)}`);
+
+  return items;
+}
+
+function getDraftLabTeTimingItems(result) {
+  const timing = result.teTiming;
+  if (!timing) return [];
+  const items = [
+    `Elite TE: ${timing.eliteTeCount}/${result.mockCount}`,
+    `Backup TE: ${timing.backupTeCount}/${result.mockCount}`,
+    `TE3 builds: ${timing.threeTeCount}/${result.mockCount}`
+  ];
+
+  if (timing.avgFirstTeRound) items.push(`Avg first TE: Round ${formatOneDecimal(timing.avgFirstTeRound)}`);
+  if (timing.firstTeRounds?.length) items.push(`First TE rounds: ${timing.firstTeRounds.map((item) => `${item.label} ${item.count}x`).join(", ")}`);
+  if (timing.topTes?.length) items.push(`Frequent TEs: ${timing.topTes.map((item) => `${item.label} ${item.count}x`).join(", ")}`);
+  if (timing.eliteImpact) items.push(`Elite TE build: ${Math.round(timing.eliteImpact.avgScore)} score, RB ${formatOneDecimal(timing.eliteImpact.avgRb)}, WR ${formatOneDecimal(timing.eliteImpact.avgWr)}`);
+  if (timing.nonEliteImpact) items.push(`Non-elite TE build: ${Math.round(timing.nonEliteImpact.avgScore)} score, RB ${formatOneDecimal(timing.nonEliteImpact.avgRb)}, WR ${formatOneDecimal(timing.nonEliteImpact.avgWr)}`);
 
   return items;
 }
