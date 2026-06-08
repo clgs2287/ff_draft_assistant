@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v40";
+const APP_CACHE_VERSION = "ward19-draft-v41";
 const DRAFT_SHARKS_WEIGHT = 0.55;
 const FANTASYPROS_WEIGHT = 0.45;
 const BOARD_LIMIT = 220;
@@ -20,6 +20,33 @@ const STRATEGY_MODES = [
   { id: "elite-onesie", label: "Elite QB/TE", detail: "Push top QB or TE" },
   { id: "value-only", label: "Value Only", detail: "Respect ADP value" }
 ];
+const TEAM_PROFILE_OPTIONS = {
+  qb: [
+    { id: "normal", label: "QB normal" },
+    { id: "early", label: "QB early" },
+    { id: "two-plus", label: "2+ QBs" }
+  ],
+  def: [
+    { id: "normal", label: "DEF normal" },
+    { id: "early", label: "DEF early" }
+  ],
+  position: [
+    { id: "balanced", label: "Balanced" },
+    { id: "rb", label: "RB lean" },
+    { id: "wr", label: "WR lean" }
+  ],
+  reach: [
+    { id: "conservative", label: "Conservative" },
+    { id: "normal", label: "Normal" },
+    { id: "chaotic", label: "Chaotic" }
+  ]
+};
+const DEFAULT_TEAM_PROFILE = {
+  qb: "two-plus",
+  def: "normal",
+  position: "balanced",
+  reach: "normal"
+};
 const app = document.querySelector("#app");
 
 let state = loadState();
@@ -33,6 +60,7 @@ function defaultState() {
     editPickIndex: null,
     editSearch: "",
     teamNames: defaultTeamNames,
+    teamProfiles: Array.from({ length: leagueSettings.teams }, () => ({ ...DEFAULT_TEAM_PROFILE })),
     teamSort: "roster",
     liveFilter: "ALL",
     positionFilter: "ALL",
@@ -52,6 +80,7 @@ function loadState() {
 
 function normalizeState(nextState) {
   const savedTeamNames = Array.isArray(nextState.teamNames) ? nextState.teamNames : [];
+  const savedTeamProfiles = Array.isArray(nextState.teamProfiles) ? nextState.teamProfiles : [];
   const strategyMode = STRATEGY_MODES.some((mode) => mode.id === nextState.strategyMode) ? nextState.strategyMode : "balanced";
   return {
     ...nextState,
@@ -59,8 +88,22 @@ function normalizeState(nextState) {
     teamNames: Array.from({ length: leagueSettings.teams }, (_, index) => {
       const name = String(savedTeamNames[index] ?? "").trim();
       return name || defaultTeamNames[index];
-    })
+    }),
+    teamProfiles: Array.from({ length: leagueSettings.teams }, (_, index) => normalizeTeamProfile(savedTeamProfiles[index]))
   };
+}
+
+function normalizeTeamProfile(profile = {}) {
+  return {
+    qb: isProfileOption("qb", profile.qb) ? profile.qb : DEFAULT_TEAM_PROFILE.qb,
+    def: isProfileOption("def", profile.def) ? profile.def : DEFAULT_TEAM_PROFILE.def,
+    position: isProfileOption("position", profile.position) ? profile.position : DEFAULT_TEAM_PROFILE.position,
+    reach: isProfileOption("reach", profile.reach) ? profile.reach : DEFAULT_TEAM_PROFILE.reach
+  };
+}
+
+function isProfileOption(group, value) {
+  return TEAM_PROFILE_OPTIONS[group].some((option) => option.id === value);
 }
 
 function saveState() {
@@ -674,7 +717,7 @@ function toPlayerId(name, position, team) {
 
 function resetDraft() {
   if (!confirm("Reset all draft picks?")) return;
-  setState({ ...defaultState(), mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamSort: state.teamSort });
+  setState({ ...defaultState(), mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamProfiles: state.teamProfiles, teamSort: state.teamSort });
 }
 
 function getCurrentContext() {
@@ -1161,6 +1204,7 @@ function renderTeamsView() {
               <h2>${state.mySlot === teamSlot ? `My Team - ${name}` : name}</h2>
               <span>${sortLabel}</span>
             </div>
+            ${renderTeamProfileControls(teamSlot)}
             <div class="team-roster">
               ${rows.length ? rows.map(renderTeamRosterRow).join("") : "<p class='empty'>No picks yet</p>"}
             </div>
@@ -1168,6 +1212,29 @@ function renderTeamsView() {
         `;
       }).join("")}
     </section>
+  `;
+}
+
+function renderTeamProfileControls(teamSlot) {
+  const profile = getTeamProfile(teamSlot);
+  return `
+    <div class="profile-grid">
+      ${renderProfileSelect(teamSlot, "qb", "QB", profile.qb)}
+      ${renderProfileSelect(teamSlot, "def", "DEF", profile.def)}
+      ${renderProfileSelect(teamSlot, "position", "Bias", profile.position)}
+      ${renderProfileSelect(teamSlot, "reach", "Reach", profile.reach)}
+    </div>
+  `;
+}
+
+function renderProfileSelect(teamSlot, field, label, value) {
+  return `
+    <label class="profile-field">
+      <span>${label}</span>
+      <select data-team-profile="${teamSlot}" data-profile-field="${field}">
+        ${TEAM_PROFILE_OPTIONS[field].map((option) => `<option value="${option.id}" ${value === option.id ? "selected" : ""}>${option.label}</option>`).join("")}
+      </select>
+    </label>
   `;
 }
 
@@ -1739,6 +1806,7 @@ function getRosterWarnings(ctx) {
 function chooseMockPlayer(available, picks, pickInfo) {
   const roster = buildRoster(picks, pickInfo.teamSlot);
   const needs = getRosterNeeds(roster);
+  const profile = getTeamProfile(pickInfo.teamSlot);
   const remainingRosterPicks = getMockRemainingRosterPicks(needs);
   const requiredOpenSlots = getMockRequiredOpenSlots(needs);
   const earlyElitePool = getEarlyEliteMockPool(available, pickInfo);
@@ -1749,11 +1817,11 @@ function chooseMockPlayer(available, picks, pickInfo) {
   const ranked = [...viablePlayers]
     .map((player) => ({
       player,
-      score: getMockDraftScore(player, needs, pickInfo, roster) + getMockRandomness(player, pickInfo)
+      score: getMockDraftScore(player, needs, pickInfo, roster, profile) + getMockRandomness(player, pickInfo, profile)
     }))
     .sort((a, b) => b.score - a.score);
 
-  return pickWeightedMockPlayer(ranked, pickInfo)?.player;
+  return pickWeightedMockPlayer(ranked, pickInfo, profile)?.player;
 }
 
 function getEarlyEliteMockPool(available, pickInfo) {
@@ -1765,7 +1833,7 @@ function getEarlyEliteMockPool(available, pickInfo) {
   return elitePool.length ? elitePool : topAvailable.slice(0, Math.max(1, 5 - pickInfo.overallPick));
 }
 
-function getMockDraftScore(player, needs, pickInfo, roster) {
+function getMockDraftScore(player, needs, pickInfo, roster, profile = DEFAULT_TEAM_PROFILE) {
   const adp = Number(player.adp);
   const marketPick = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12 ? adp : player.rank;
   const round = pickInfo.round;
@@ -1775,7 +1843,9 @@ function getMockDraftScore(player, needs, pickInfo, roster) {
   if (needs[player.position] > 0) score += 18;
   if (["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0) score += 8;
   if (player.position === "WR") score += 5;
-  if (player.position === "QB") score += getMockQbTendencyBonus(qbCount, round, needs);
+  if (player.position === "QB") score += getMockQbTendencyBonus(qbCount, round, needs, profile);
+  if (player.position === "DEF") score += getMockDefenseTendencyBonus(round, needs, profile);
+  score += getMockPositionBiasBonus(player, profile);
   if (player.position === "DEF" && needs.DEF <= 0) score -= 120;
   if (player.position === "DEF" && round < 13) score -= 180;
   if (needs.BENCH <= 0 && needs[player.position] <= 0) score -= 80;
@@ -1785,7 +1855,7 @@ function getMockDraftScore(player, needs, pickInfo, roster) {
   return score;
 }
 
-function getMockRandomness(player, pickInfo) {
+function getMockRandomness(player, pickInfo, profile = DEFAULT_TEAM_PROFILE) {
   const round = pickInfo.round;
   const adp = Number(player.adp);
   const usefulAdp = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12;
@@ -1793,19 +1863,20 @@ function getMockRandomness(player, pickInfo) {
   const openingPicks = pickInfo.overallPick <= 4;
   const earlyRounds = round <= 3;
   const lateRounds = round >= 10;
-  const spread = openingPicks ? 8 : earlyRounds ? 18 : lateRounds ? 58 : 38;
+  const profileSpread = profile.reach === "chaotic" ? 1.45 : profile.reach === "conservative" ? 0.65 : 1;
+  const spread = (openingPicks ? 8 : earlyRounds ? 18 : lateRounds ? 58 : 38) * profileSpread;
   let noise = (Math.random() - 0.5) * spread;
 
-  if (player.position === "QB" && round >= 7 && Math.random() < 0.18) noise += 32;
-  if (player.position === "DEF" && round >= 12 && Math.random() < 0.16) noise += 42;
+  if (player.position === "QB" && round >= 7 && Math.random() < (profile.qb === "two-plus" ? 0.3 : 0.18)) noise += 32;
+  if (player.position === "DEF" && round >= (profile.def === "early" ? 10 : 12) && Math.random() < (profile.def === "early" ? 0.28 : 0.16)) noise += 42;
   if (["RB", "WR"].includes(player.position) && lateRounds && Math.random() < 0.22) noise += 28;
-  if (usefulAdp && adpGap <= -18 && Math.random() < 0.7) noise -= 18;
+  if (usefulAdp && adpGap <= -18 && Math.random() < (profile.reach === "chaotic" ? 0.42 : 0.7)) noise -= 18;
   if (usefulAdp && adpGap >= 10 && Math.random() < 0.4) noise += 16;
 
   return noise;
 }
 
-function pickWeightedMockPlayer(ranked, pickInfo) {
+function pickWeightedMockPlayer(ranked, pickInfo, profile = DEFAULT_TEAM_PROFILE) {
   if (!ranked.length) return null;
 
   const bestScore = ranked[0].score;
@@ -1815,7 +1886,8 @@ function pickWeightedMockPlayer(ranked, pickInfo) {
     : ranked
       .filter((entry, index) => index < 8 || entry.score >= bestScore - 42)
       .slice(0, 14);
-  const temperature = openingPicks ? 10 : 22;
+  const profileTemperature = profile.reach === "chaotic" ? 1.35 : profile.reach === "conservative" ? 0.72 : 1;
+  const temperature = (openingPicks ? 10 : 22) * profileTemperature;
   const weighted = shortlist.map((entry) => ({
     ...entry,
     weight: Math.exp((entry.score - bestScore) / temperature)
@@ -1831,24 +1903,36 @@ function pickWeightedMockPlayer(ranked, pickInfo) {
   return weighted[0];
 }
 
-function getMockQbTendencyBonus(qbCount, round, needs) {
+function getMockQbTendencyBonus(qbCount, round, needs, profile = DEFAULT_TEAM_PROFILE) {
+  const earlyBoost = profile.qb === "early" ? 48 : 0;
+  const twoQbBoost = profile.qb === "two-plus" ? 58 : 0;
+
   if (qbCount === 0) {
-    if (round >= 10) return 140;
-    if (round >= 8) return 82;
-    if (round >= 6) return 38;
+    if (round >= 10) return 140 + twoQbBoost;
+    if (round >= 8) return 82 + twoQbBoost;
+    if (round >= 6) return 38 + earlyBoost + Math.round(twoQbBoost * 0.45);
+    if (round >= 4) return earlyBoost;
     if (round <= 3) return -16;
     return 0;
   }
 
   if (qbCount === 1) {
     if (needs.BENCH <= 0) return -220;
-    if (round <= 6) return -125;
-    if (round === 7) return -65;
-    if (round === 8) return -20;
-    if (round === 9) return 35;
-    if (round === 10) return 85;
-    if (round === 11) return 125;
-    return 170;
+    if (profile.qb !== "two-plus") {
+      if (round <= 6) return -125;
+      if (round === 7) return -65;
+      if (round === 8) return -20;
+      if (round === 9) return 35;
+      if (round === 10) return 85;
+      if (round === 11) return 125;
+      return 170;
+    }
+    if (round <= 6) return -70;
+    if (round === 7) return 5;
+    if (round === 8) return 42;
+    if (round === 9) return 92;
+    if (round === 10) return 142;
+    return 190;
   }
 
   if (qbCount === 2) {
@@ -1857,6 +1941,22 @@ function getMockQbTendencyBonus(qbCount, round, needs) {
   }
 
   return -260;
+}
+
+function getMockDefenseTendencyBonus(round, needs, profile = DEFAULT_TEAM_PROFILE) {
+  if (profile.def !== "early" || needs.DEF <= 0) return 0;
+  if (round >= 12) return 82;
+  if (round >= 10) return 56;
+  if (round >= 8) return 24;
+  return 0;
+}
+
+function getMockPositionBiasBonus(player, profile = DEFAULT_TEAM_PROFILE) {
+  if (profile.position === "rb" && player.position === "RB") return 16;
+  if (profile.position === "rb" && player.position === "WR") return -6;
+  if (profile.position === "wr" && player.position === "WR") return 16;
+  if (profile.position === "wr" && player.position === "RB") return -6;
+  return 0;
 }
 
 function getMockRequiredOpenSlots(needs) {
@@ -1905,6 +2005,17 @@ function saveTeamNameInput(teamSlot, value) {
   names[teamSlot - 1] = value;
   state = { ...state, teamNames: names };
   saveState();
+}
+
+function getTeamProfile(teamSlot) {
+  return normalizeTeamProfile(state.teamProfiles?.[teamSlot - 1]);
+}
+
+function updateTeamProfile(teamSlot, field, value) {
+  if (!isProfileOption(field, value)) return;
+  const profiles = Array.from({ length: leagueSettings.teams }, (_, index) => getTeamProfile(index + 1));
+  profiles[teamSlot - 1] = { ...profiles[teamSlot - 1], [field]: value };
+  setState({ teamProfiles: profiles });
 }
 
 function getTeamName(teamSlot) {
@@ -1987,6 +2098,7 @@ function buildTeamHistory(teamSlot) {
   return {
     teamSlot,
     teamName: getTeamName(teamSlot),
+    profile: getTeamProfile(teamSlot),
     isMyTeam: state.mySlot === teamSlot,
     pickCount: picks.length,
     positionCounts,
@@ -2070,6 +2182,10 @@ function bindEvents() {
         event.currentTarget.blur();
       }
     });
+  });
+
+  app.querySelectorAll("[data-team-profile]").forEach((select) => {
+    select.addEventListener("change", (event) => updateTeamProfile(Number(event.target.dataset.teamProfile), event.target.dataset.profileField, event.target.value));
   });
 
   app.querySelector("[data-action='undo']")?.addEventListener("click", undoPick);
