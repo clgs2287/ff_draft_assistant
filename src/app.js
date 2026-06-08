@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v38";
+const APP_CACHE_VERSION = "ward19-draft-v39";
 const DRAFT_SHARKS_WEIGHT = 0.55;
 const FANTASYPROS_WEIGHT = 0.45;
 const BOARD_LIMIT = 220;
@@ -1739,10 +1739,20 @@ function getRosterWarnings(ctx) {
 function chooseMockPlayer(available, picks, pickInfo) {
   const roster = buildRoster(picks, pickInfo.teamSlot);
   const needs = getRosterNeeds(roster);
+  const remainingRosterPicks = getMockRemainingRosterPicks(needs);
+  const requiredOpenSlots = getMockRequiredOpenSlots(needs);
+  const viablePlayers = remainingRosterPicks <= requiredOpenSlots
+    ? available.filter((player) => fillsMockRequiredSlot(player, needs))
+    : available;
 
-  return [...available]
-    .map((player) => ({ player, score: getMockDraftScore(player, needs, pickInfo, roster) }))
-    .sort((a, b) => b.score - a.score)[0]?.player;
+  const ranked = [...viablePlayers]
+    .map((player) => ({
+      player,
+      score: getMockDraftScore(player, needs, pickInfo, roster) + getMockRandomness(player, pickInfo)
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  return pickWeightedMockPlayer(ranked)?.player;
 }
 
 function getMockDraftScore(player, needs, pickInfo, roster) {
@@ -1763,6 +1773,48 @@ function getMockDraftScore(player, needs, pickInfo, roster) {
   if (player.position === "DEF" && needs.DEF > 0 && round >= 14) score += 260;
 
   return score;
+}
+
+function getMockRandomness(player, pickInfo) {
+  const round = pickInfo.round;
+  const adp = Number(player.adp);
+  const usefulAdp = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12;
+  const adpGap = usefulAdp ? pickInfo.overallPick - adp : 0;
+  const earlyRounds = round <= 3;
+  const lateRounds = round >= 10;
+  const spread = earlyRounds ? 18 : lateRounds ? 58 : 38;
+  let noise = (Math.random() - 0.5) * spread;
+
+  if (player.position === "QB" && round >= 7 && Math.random() < 0.18) noise += 32;
+  if (player.position === "DEF" && round >= 12 && Math.random() < 0.16) noise += 42;
+  if (["RB", "WR"].includes(player.position) && lateRounds && Math.random() < 0.22) noise += 28;
+  if (usefulAdp && adpGap <= -18 && Math.random() < 0.7) noise -= 18;
+  if (usefulAdp && adpGap >= 10 && Math.random() < 0.4) noise += 16;
+
+  return noise;
+}
+
+function pickWeightedMockPlayer(ranked) {
+  if (!ranked.length) return null;
+
+  const bestScore = ranked[0].score;
+  const shortlist = ranked
+    .filter((entry, index) => index < 8 || entry.score >= bestScore - 42)
+    .slice(0, 14);
+  const temperature = 22;
+  const weighted = shortlist.map((entry) => ({
+    ...entry,
+    weight: Math.exp((entry.score - bestScore) / temperature)
+  }));
+  const totalWeight = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  let cursor = Math.random() * totalWeight;
+
+  for (const entry of weighted) {
+    cursor -= entry.weight;
+    if (cursor <= 0) return entry;
+  }
+
+  return weighted[0];
 }
 
 function getMockQbTendencyBonus(qbCount, round, needs) {
