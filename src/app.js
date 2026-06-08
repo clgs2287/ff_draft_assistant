@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v42";
+const APP_CACHE_VERSION = "ward19-draft-v43";
 const DRAFT_SHARKS_WEIGHT = 0.55;
 const FANTASYPROS_WEIGHT = 0.45;
 const BOARD_LIMIT = 220;
@@ -2289,6 +2289,16 @@ function summarizeTeamTendencies(picks, positionCounts, firstByPosition) {
 }
 
 function bindEvents() {
+  const refocusInputAtEnd = (selector) => {
+    requestAnimationFrame(() => {
+      const input = app.querySelector(selector);
+      if (!input) return;
+      input.focus();
+      const end = input.value.length;
+      input.setSelectionRange?.(end, end);
+    });
+  };
+
   app.querySelectorAll("[data-slot]").forEach((button) => {
     button.addEventListener("click", () => setState({ mySlot: Number(button.dataset.slot) }));
   });
@@ -2377,13 +2387,13 @@ function bindEvents() {
     state.search = event.target.value;
     saveState();
     render();
-    app.querySelector("[data-input='search']")?.focus();
+    refocusInputAtEnd("[data-input='search']");
   });
   app.querySelector("[data-input='edit-search']")?.addEventListener("input", (event) => {
     state.editSearch = event.target.value;
     saveState();
     render();
-    app.querySelector("[data-input='edit-search']")?.focus();
+    refocusInputAtEnd("[data-input='edit-search']");
   });
 }
 
