@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v50";
+const APP_CACHE_VERSION = "ward19-draft-v51";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1175,7 +1175,8 @@ function summarizeDraftLabRuns(runs) {
   const avgScore = average(runs.map((run) => run.recap.score));
   const rosterShapes = countBy(runs, (run) => `QB ${run.counts.QB}, RB ${run.counts.RB}, WR ${run.counts.WR}, TE ${run.counts.TE}, DEF ${run.counts.DEF}`);
   const firstFive = countBy(runs, (run) => run.myPicks.slice(0, 5).map((pick) => pick.player.name).join(" / "));
-  const landedPlayers = countBy(runs.flatMap((run) => run.myPicks.map((pick) => pick.player.name)), (name) => name);
+  const landedPlayers = countBy(runs.flatMap((run) => run.myPicks.filter((pick) => pick.player.position !== "DEF").map((pick) => pick.player.name)), (name) => name);
+  const landedDefenses = countBy(runs.flatMap((run) => run.myPicks.filter((pick) => pick.player.position === "DEF").map((pick) => pick.player.name)), (name) => name);
   const thinFlags = {
     rbThin: runs.filter((run) => run.counts.RB < 4).length,
     wrThin: runs.filter((run) => run.counts.WR < 5).length,
@@ -1194,6 +1195,7 @@ function summarizeDraftLabRuns(runs) {
     topRosterShapes: topCounts(rosterShapes, 4),
     topFirstFive: topCounts(firstFive, 4),
     topPlayers: topCounts(landedPlayers, 10),
+    topDefenses: topCounts(landedDefenses, 4),
     qbTiming: getDraftLabQbTiming(runs),
     teTiming: getDraftLabTeTiming(runs),
     thinFlags
@@ -1833,7 +1835,8 @@ function renderDraftLabResult(result) {
       ${renderLabBlock("Grades", topCounts(result.gradeCounts, 5).map((item) => `${item.label}: ${item.count}/${result.mockCount}`))}
       ${renderLabBlock("Common Builds", result.topRosterShapes.map((item) => `${item.label} - ${item.count}x`))}
       ${renderLabBlock("Common Starts", result.topFirstFive.map((item) => `${item.count}x - ${item.label}`))}
-      ${renderLabBlock("Frequent Players", result.topPlayers.slice(0, 6).map((item) => `${item.label} - ${item.count}x`))}
+      ${renderLabBlock("Frequent Skill Players", result.topPlayers.slice(0, 6).map((item) => `${item.label} - ${item.count}x`))}
+      ${renderLabBlock("DEF Timing", getDraftLabDefenseItems(result))}
       ${renderLabBlock("QB Timing", getDraftLabQbTimingItems(result))}
       ${renderLabBlock("TE Timing", getDraftLabTeTimingItems(result))}
       ${renderLabBlock("Thin Spots", getDraftLabThinSpotItems(result))}
@@ -1858,6 +1861,14 @@ function getDraftLabThinSpotItems(result) {
     `No QB: ${flags.noQb}/${result.mockCount}`,
     `No TE: ${flags.noTe}/${result.mockCount}`,
     `No DEF: ${flags.noDef}/${result.mockCount}`
+  ];
+}
+
+function getDraftLabDefenseItems(result) {
+  const defenses = result.topDefenses ?? [];
+  return [
+    `No DEF: ${result.thinFlags.noDef}/${result.mockCount}`,
+    ...(defenses.length ? defenses.map((item) => `${item.label} - ${item.count}x`) : ["No defense drafted in these mocks."])
   ];
 }
 
