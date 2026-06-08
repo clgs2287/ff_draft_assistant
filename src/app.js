@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v39";
+const APP_CACHE_VERSION = "ward19-draft-v40";
 const DRAFT_SHARKS_WEIGHT = 0.55;
 const FANTASYPROS_WEIGHT = 0.45;
 const BOARD_LIMIT = 220;
@@ -1741,7 +1741,8 @@ function chooseMockPlayer(available, picks, pickInfo) {
   const needs = getRosterNeeds(roster);
   const remainingRosterPicks = getMockRemainingRosterPicks(needs);
   const requiredOpenSlots = getMockRequiredOpenSlots(needs);
-  const viablePlayers = remainingRosterPicks <= requiredOpenSlots
+  const earlyElitePool = getEarlyEliteMockPool(available, pickInfo);
+  const viablePlayers = earlyElitePool.length ? earlyElitePool : remainingRosterPicks <= requiredOpenSlots
     ? available.filter((player) => fillsMockRequiredSlot(player, needs))
     : available;
 
@@ -1752,7 +1753,16 @@ function chooseMockPlayer(available, picks, pickInfo) {
     }))
     .sort((a, b) => b.score - a.score);
 
-  return pickWeightedMockPlayer(ranked)?.player;
+  return pickWeightedMockPlayer(ranked, pickInfo)?.player;
+}
+
+function getEarlyEliteMockPool(available, pickInfo) {
+  if (pickInfo.overallPick > 4) return [];
+
+  const topAvailable = [...available].sort((a, b) => a.rank - b.rank);
+  const elitePool = topAvailable.filter((player) => player.rank <= 4);
+
+  return elitePool.length ? elitePool : topAvailable.slice(0, Math.max(1, 5 - pickInfo.overallPick));
 }
 
 function getMockDraftScore(player, needs, pickInfo, roster) {
@@ -1780,9 +1790,10 @@ function getMockRandomness(player, pickInfo) {
   const adp = Number(player.adp);
   const usefulAdp = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12;
   const adpGap = usefulAdp ? pickInfo.overallPick - adp : 0;
+  const openingPicks = pickInfo.overallPick <= 4;
   const earlyRounds = round <= 3;
   const lateRounds = round >= 10;
-  const spread = earlyRounds ? 18 : lateRounds ? 58 : 38;
+  const spread = openingPicks ? 8 : earlyRounds ? 18 : lateRounds ? 58 : 38;
   let noise = (Math.random() - 0.5) * spread;
 
   if (player.position === "QB" && round >= 7 && Math.random() < 0.18) noise += 32;
@@ -1794,14 +1805,17 @@ function getMockRandomness(player, pickInfo) {
   return noise;
 }
 
-function pickWeightedMockPlayer(ranked) {
+function pickWeightedMockPlayer(ranked, pickInfo) {
   if (!ranked.length) return null;
 
   const bestScore = ranked[0].score;
-  const shortlist = ranked
-    .filter((entry, index) => index < 8 || entry.score >= bestScore - 42)
-    .slice(0, 14);
-  const temperature = 22;
+  const openingPicks = pickInfo.overallPick <= 4;
+  const shortlist = openingPicks
+    ? ranked.slice(0, 4)
+    : ranked
+      .filter((entry, index) => index < 8 || entry.score >= bestScore - 42)
+      .slice(0, 14);
+  const temperature = openingPicks ? 10 : 22;
   const weighted = shortlist.map((entry) => ({
     ...entry,
     weight: Math.exp((entry.score - bestScore) / temperature)
