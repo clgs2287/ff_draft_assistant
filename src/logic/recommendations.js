@@ -384,9 +384,13 @@ function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode)
   }
 
   if (strategyMode === "value-only") {
-    if (isValue) return Math.min(valueGap, 18) * 1.2;
-    if (isReach && drafted < leagueSettings.draftRounds - 2) return Math.max(valueGap, -18) * 1.15;
-    return 0;
+    let adjustment = 0;
+    if (isValue) adjustment += Math.min(valueGap, 18) * 1.2;
+    if (isReach && drafted < leagueSettings.draftRounds - 2) adjustment += Math.max(valueGap, -18) * 1.15;
+    if (player.position === "WR" && wrCount < 5 && round >= 7) adjustment += round >= 10 ? 28 : 18;
+    if (player.position === "RB" && rbCount >= 6 && wrCount < 5 && round >= 7) adjustment -= 36;
+    if (player.position === "RB" && rbCount >= 5 && wrCount < 5 && round >= 7 && !isMajorValue) adjustment -= 18;
+    return adjustment;
   }
 
   return 0;
