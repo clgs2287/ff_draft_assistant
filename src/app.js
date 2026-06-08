@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v48";
+const APP_CACHE_VERSION = "ward19-draft-v49";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1194,7 +1194,37 @@ function summarizeDraftLabRuns(runs) {
     topRosterShapes: topCounts(rosterShapes, 4),
     topFirstFive: topCounts(firstFive, 4),
     topPlayers: topCounts(landedPlayers, 10),
+    qbTiming: getDraftLabQbTiming(runs),
     thinFlags
+  };
+}
+
+function getDraftLabQbTiming(runs) {
+  const firstQbs = runs
+    .map((run) => run.myPicks.find((pick) => pick.player.position === "QB"))
+    .filter(Boolean);
+  const eliteQbRuns = runs.filter((run) => run.myPicks.some((pick) => pick.player.position === "QB" && Number(pick.player.positionalRank) <= 5));
+  const nonEliteQbRuns = runs.filter((run) => !run.myPicks.some((pick) => pick.player.position === "QB" && Number(pick.player.positionalRank) <= 5));
+  const joshAllenRuns = runs.filter((run) => run.myPicks.some((pick) => pick.player.name === "Josh Allen"));
+  const roundCounts = countBy(firstQbs, (pick) => `Round ${pick.round}`);
+
+  return {
+    firstQbRounds: topCounts(roundCounts, 4),
+    avgFirstQbRound: average(firstQbs.map((pick) => pick.round)),
+    joshAllenCount: joshAllenRuns.length,
+    eliteQbCount: eliteQbRuns.length,
+    backupQbCount: runs.filter((run) => run.counts.QB >= 2).length,
+    eliteImpact: getDraftLabBuildImpact(eliteQbRuns),
+    nonEliteImpact: getDraftLabBuildImpact(nonEliteQbRuns)
+  };
+}
+
+function getDraftLabBuildImpact(runs) {
+  if (!runs.length) return null;
+  return {
+    avgScore: average(runs.map((run) => run.recap.score)),
+    avgRb: average(runs.map((run) => run.counts.RB)),
+    avgWr: average(runs.map((run) => run.counts.WR))
   };
 }
 
@@ -1781,6 +1811,7 @@ function renderDraftLabResult(result) {
       ${renderLabBlock("Common Builds", result.topRosterShapes.map((item) => `${item.label} - ${item.count}x`))}
       ${renderLabBlock("Common Starts", result.topFirstFive.map((item) => `${item.count}x - ${item.label}`))}
       ${renderLabBlock("Frequent Players", result.topPlayers.slice(0, 6).map((item) => `${item.label} - ${item.count}x`))}
+      ${renderLabBlock("QB Timing", getDraftLabQbTimingItems(result))}
       ${renderLabBlock("Thin Spots", getDraftLabThinSpotItems(result))}
     </div>
   `;
@@ -1804,6 +1835,27 @@ function getDraftLabThinSpotItems(result) {
     `No TE: ${flags.noTe}/${result.mockCount}`,
     `No DEF: ${flags.noDef}/${result.mockCount}`
   ];
+}
+
+function getDraftLabQbTimingItems(result) {
+  const timing = result.qbTiming;
+  if (!timing) return [];
+  const items = [
+    `Josh Allen: ${timing.joshAllenCount}/${result.mockCount}`,
+    `Elite QB: ${timing.eliteQbCount}/${result.mockCount}`,
+    `Backup QB: ${timing.backupQbCount}/${result.mockCount}`
+  ];
+
+  if (timing.avgFirstQbRound) items.push(`Avg first QB: Round ${formatOneDecimal(timing.avgFirstQbRound)}`);
+  if (timing.firstQbRounds?.length) items.push(`First QB rounds: ${timing.firstQbRounds.map((item) => `${item.label} ${item.count}x`).join(", ")}`);
+  if (timing.eliteImpact) items.push(`Elite QB build: ${Math.round(timing.eliteImpact.avgScore)} score, RB ${formatOneDecimal(timing.eliteImpact.avgRb)}, WR ${formatOneDecimal(timing.eliteImpact.avgWr)}`);
+  if (timing.nonEliteImpact) items.push(`Non-elite QB build: ${Math.round(timing.nonEliteImpact.avgScore)} score, RB ${formatOneDecimal(timing.nonEliteImpact.avgRb)}, WR ${formatOneDecimal(timing.nonEliteImpact.avgWr)}`);
+
+  return items;
+}
+
+function formatOneDecimal(value) {
+  return Number(value).toFixed(1).replace(/\.0$/g, "");
 }
 
 function formatLabTimestamp(value) {
