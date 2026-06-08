@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v44";
+const APP_CACHE_VERSION = "ward19-draft-v45";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -52,6 +52,7 @@ const app = document.querySelector("#app");
 
 let state = loadState();
 let playerData = loadPlayerData();
+let pendingRankingImport = null;
 
 function defaultState() {
   return {
@@ -409,16 +410,17 @@ function importGenericRankingSource(file) {
 
       const sourceId = toSourceId(sourceName);
       const existingSources = getActiveRankingSources().filter((source) => source.id !== sourceId);
+      const source = {
+        id: sourceId,
+        name: sourceName.trim(),
+        fileName: file.name,
+        importedAt: new Date().toISOString(),
+        weight,
+        rows
+      };
       const rankingSources = [
         ...existingSources,
-        {
-          id: sourceId,
-          name: sourceName.trim(),
-          fileName: file.name,
-          importedAt: new Date().toISOString(),
-          weight,
-          rows
-        }
+        source
       ];
       const nextData = rebuildPlayerData({
         ...getPlayerDataMeta(),
@@ -428,12 +430,76 @@ function importGenericRankingSource(file) {
         draftSharksRows: playerData?.draftSharksRows ?? [],
         rankingSources
       });
-      savePlayerData(nextData);
-      alert(`Imported ${rows.length} ${sourceName} rows and matched ${nextData.sourceMatches[sourceId] ?? 0} active players.`);
+      pendingRankingImport = buildRankingImportPreview(source, nextData);
+      render();
     } catch {
       alert("Could not import that ranking source CSV.");
     }
   });
+}
+
+function applyPendingRankingImport() {
+  if (!pendingRankingImport) return;
+  const applied = pendingRankingImport;
+  pendingRankingImport = null;
+  savePlayerData(applied.nextData);
+  alert(`Imported ${applied.rowCount} ${applied.sourceName} rows and matched ${applied.matchCount} active players.`);
+}
+
+function cancelPendingRankingImport() {
+  pendingRankingImport = null;
+  render();
+}
+
+function buildRankingImportPreview(source, nextData) {
+  const currentPlayers = getPlayerPool();
+  const activeKeys = new Set(getBaseRankingPlayers().map((player) => playerKey(player.name, player.team)));
+  const unmatched = source.rows
+    .filter((row) => !activeKeys.has(playerKey(row.name, row.team)))
+    .slice(0, 8)
+    .map((row) => `${row.name} ${row.team} ${row.position}`);
+  const matchCount = nextData.sourceMatches[source.id] ?? 0;
+  const matchRate = source.rows.length ? matchCount / source.rows.length : 0;
+  const warnings = [];
+
+  if (matchRate < 0.5) warnings.push("Low match rate. Check that names, teams, and positions are in separate columns.");
+  if (unmatched.length) warnings.push(`${unmatched.length} sample unmatched rows found.`);
+
+  return {
+    id: `${source.id}-${Date.now()}`,
+    sourceId: source.id,
+    sourceName: source.name,
+    fileName: source.fileName,
+    weight: source.weight,
+    rowCount: source.rows.length,
+    matchCount,
+    unmatched,
+    movers: getRankMovers(currentPlayers, nextData.players),
+    warnings,
+    nextData
+  };
+}
+
+function getRankMovers(beforePlayers, afterPlayers) {
+  const beforeByKey = new Map(beforePlayers.map((player) => [playerKey(player.name, player.team), player]));
+  return afterPlayers
+    .map((player) => {
+      const before = beforeByKey.get(playerKey(player.name, player.team));
+      if (!before) return null;
+      const delta = before.rank - player.rank;
+      if (!delta) return null;
+      return {
+        name: player.name,
+        position: player.position,
+        team: player.team,
+        beforeRank: before.rank,
+        afterRank: player.rank,
+        delta
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.afterRank - b.afterRank)
+    .slice(0, 8);
 }
 
 function updateRankingSourceWeight(sourceId, value) {
@@ -1707,6 +1773,7 @@ function renderDataImportPanel() {
       <div class="source-list">
         ${sources.map(renderRankingSourceRow).join("")}
       </div>
+      ${renderRankingImportPreview()}
       <div class="data-status">
         <strong>${status.title}</strong>
         <span>${status.detail}</span>
@@ -1728,6 +1795,39 @@ function renderRankingSourceRow(source) {
         <input type="number" min="1" max="100" step="1" value="${source.weight}" data-source-weight="${source.id}" ${playerData ? "" : "disabled"} />
       </label>
       ${source.id.startsWith("custom-") ? `<button class="mini-button danger-mini" data-remove-source="${source.id}">Remove</button>` : ""}
+    </div>
+  `;
+}
+
+function renderRankingImportPreview() {
+  if (!pendingRankingImport) return "";
+  const preview = pendingRankingImport;
+  return `
+    <div class="import-preview">
+      <div class="import-preview-head">
+        <div>
+          <strong>Preview ${escapeHtml(preview.sourceName)}</strong>
+          <em>${escapeHtml(preview.fileName)} - weight ${preview.weight}</em>
+        </div>
+        <span>${preview.matchCount}/${preview.rowCount} matched</span>
+      </div>
+      ${preview.warnings.length ? `<div class="import-warnings">${preview.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</div>` : ""}
+      <div class="preview-grid">
+        <article>
+          <h3>Rank Movers</h3>
+          ${preview.movers.length ? preview.movers.map((player) => `
+            <p>${escapeHtml(player.name)} <span>${player.beforeRank} to ${player.afterRank} (${formatRankDelta(player.delta)})</span></p>
+          `).join("") : "<p>No major rank movement.</p>"}
+        </article>
+        <article>
+          <h3>Unmatched Samples</h3>
+          ${preview.unmatched.length ? preview.unmatched.map((name) => `<p>${escapeHtml(name)}</p>`).join("") : "<p>All sampled rows matched.</p>"}
+        </article>
+      </div>
+      <div class="preview-actions">
+        <button class="primary-lite" data-action="apply-ranking-import">Apply Import</button>
+        <button class="secondary" data-action="cancel-ranking-import">Cancel</button>
+      </div>
     </div>
   `;
 }
@@ -1900,6 +2000,10 @@ function formatScore(score) {
 function formatSignedScore(value) {
   const rounded = Math.round(value);
   return rounded > 0 ? `+${rounded}` : String(rounded);
+}
+
+function formatRankDelta(delta) {
+  return delta > 0 ? `up ${delta}` : `down ${Math.abs(delta)}`;
 }
 
 function isLikelyGoneBefore(player, targetPick) {
@@ -2705,6 +2809,8 @@ function bindEvents() {
   app.querySelectorAll("[data-remove-source]").forEach((button) => {
     button.addEventListener("click", () => removeRankingSource(button.dataset.removeSource));
   });
+  app.querySelector("[data-action='apply-ranking-import']")?.addEventListener("click", applyPendingRankingImport);
+  app.querySelector("[data-action='cancel-ranking-import']")?.addEventListener("click", cancelPendingRankingImport);
   app.querySelector("[data-action='reset-player-data']")?.addEventListener("click", resetImportedPlayerData);
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);

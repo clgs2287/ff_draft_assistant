@@ -1146,6 +1146,106 @@ h2 {
   opacity: 0.55;
 }
 
+.import-preview {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(47, 131, 255, 0.08);
+}
+
+.import-preview-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.import-preview-head strong,
+.import-preview-head em {
+  display: block;
+}
+
+.import-preview-head strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.import-preview-head em {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.import-preview-head span {
+  min-width: max-content;
+  color: var(--ice);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.import-warnings {
+  display: grid;
+  gap: 5px;
+}
+
+.import-warnings p {
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(242, 193, 78, 0.24);
+  border-radius: 8px;
+  background: rgba(242, 193, 78, 0.08);
+  color: #f7d98b;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.preview-grid article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(159, 181, 208, 0.14);
+  border-radius: 8px;
+  background: rgba(8, 16, 27, 0.62);
+}
+
+.preview-grid h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.preview-grid p {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.preview-grid p span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.preview-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .data-status {
   display: grid;
   gap: 4px;
@@ -1384,6 +1484,16 @@ h2 {
 
   .source-row .mini-button {
     grid-column: 1 / -1;
+  }
+
+  .import-preview-head {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .preview-grid,
+  .preview-actions {
+    grid-template-columns: 1fr;
   }
 
   .tabs {
