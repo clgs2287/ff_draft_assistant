@@ -5,9 +5,10 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v43";
-const DRAFT_SHARKS_WEIGHT = 0.55;
-const FANTASYPROS_WEIGHT = 0.45;
+const APP_CACHE_VERSION = "ward19-draft-v44";
+const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
+const DEFAULT_FANTASYPROS_WEIGHT = 45;
+const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
 const BOARD_LIMIT = 220;
 const TEAM_ROSTER_TEMPLATE = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST", "BN", "BN", "BN", "BN", "BN", "BN"];
 const TEAM_CODES = [
@@ -307,28 +308,17 @@ function importFantasyProsRankings(file) {
 
       const beatAdpRows = playerData?.beatAdpRows ?? [];
       const draftSharksRows = playerData?.draftSharksRows ?? [];
-      const draftSharksMerge = mergePlayersWithDraftSharks(rankingPlayers, draftSharksRows);
-      const beatAdpMerge = mergePlayersWithBeatAdp(draftSharksMerge.players, beatAdpRows);
-      savePlayerData({
-        schemaVersion: 1,
+      const nextData = rebuildPlayerData({
+        ...getPlayerDataMeta(),
         importedAt: new Date().toISOString(),
         rankingsFileName: file.name,
         rankingsImportedAt: new Date().toISOString(),
-        beatAdpFileName: playerData?.beatAdpFileName ?? null,
-        beatAdpImportedAt: playerData?.beatAdpImportedAt ?? null,
-        draftSharksFileName: playerData?.draftSharksFileName ?? null,
-        draftSharksImportedAt: playerData?.draftSharksImportedAt ?? null,
-        rankingCount: rankingPlayers.length,
-        beatAdpCount: beatAdpRows.length,
-        draftSharksCount: draftSharksRows.length,
-        matchedBeatAdp: beatAdpMerge.matched,
-        matchedDraftSharks: draftSharksMerge.matched,
         rankingPlayers,
         beatAdpRows,
-        draftSharksRows,
-        players: beatAdpMerge.players
+        draftSharksRows
       });
-      alert(`Imported ${beatAdpMerge.players.length} ranked players${draftSharksRows.length ? `, matched ${draftSharksMerge.matched} Draft Sharks rows` : ""}${beatAdpRows.length ? `, and matched ${beatAdpMerge.matched} Beat ADP rows` : ""}.`);
+      savePlayerData(nextData);
+      alert(`Imported ${nextData.players.length} ranked players${draftSharksRows.length ? `, matched ${nextData.matchedDraftSharks} Draft Sharks rows` : ""}${beatAdpRows.length ? `, and matched ${nextData.matchedBeatAdp} Beat ADP rows` : ""}.`);
     } catch {
       alert("Could not import that FantasyPros rankings CSV.");
     }
@@ -348,28 +338,17 @@ function importBeatAdp(file) {
 
       const basePlayers = getBaseRankingPlayers();
       const draftSharksRows = playerData?.draftSharksRows ?? [];
-      const draftSharksMerge = mergePlayersWithDraftSharks(basePlayers, draftSharksRows);
-      const beatAdpMerge = mergePlayersWithBeatAdp(draftSharksMerge.players, beatAdpRows);
-      savePlayerData({
-        schemaVersion: 1,
+      const nextData = rebuildPlayerData({
+        ...getPlayerDataMeta(),
         importedAt: new Date().toISOString(),
-        rankingsFileName: playerData?.rankingsFileName ?? "Bundled FantasyPros rankings",
-        rankingsImportedAt: playerData?.rankingsImportedAt ?? null,
         beatAdpFileName: file.name,
         beatAdpImportedAt: new Date().toISOString(),
-        draftSharksFileName: playerData?.draftSharksFileName ?? null,
-        draftSharksImportedAt: playerData?.draftSharksImportedAt ?? null,
-        rankingCount: basePlayers.length,
-        beatAdpCount: beatAdpRows.length,
-        draftSharksCount: draftSharksRows.length,
-        matchedBeatAdp: beatAdpMerge.matched,
-        matchedDraftSharks: draftSharksMerge.matched,
         rankingPlayers: basePlayers,
         beatAdpRows,
-        draftSharksRows,
-        players: beatAdpMerge.players
+        draftSharksRows
       });
-      alert(`Imported ${beatAdpRows.length} Beat ADP rows and matched ${beatAdpMerge.matched} players.`);
+      savePlayerData(nextData);
+      alert(`Imported ${beatAdpRows.length} Beat ADP rows and matched ${nextData.matchedBeatAdp} players.`);
     } catch {
       alert("Could not import that Beat ADP CSV.");
     }
@@ -389,32 +368,280 @@ function importDraftSharksRankings(file) {
 
       const basePlayers = getBaseRankingPlayers();
       const beatAdpRows = playerData?.beatAdpRows ?? [];
-      const draftSharksMerge = mergePlayersWithDraftSharks(basePlayers, draftSharksRows);
-      const beatAdpMerge = mergePlayersWithBeatAdp(draftSharksMerge.players, beatAdpRows);
-      savePlayerData({
-        schemaVersion: 1,
+      const nextData = rebuildPlayerData({
+        ...getPlayerDataMeta(),
         importedAt: new Date().toISOString(),
-        rankingsFileName: playerData?.rankingsFileName ?? "Bundled FantasyPros rankings",
-        rankingsImportedAt: playerData?.rankingsImportedAt ?? null,
-        beatAdpFileName: playerData?.beatAdpFileName ?? null,
-        beatAdpImportedAt: playerData?.beatAdpImportedAt ?? null,
         draftSharksFileName: file.name,
         draftSharksImportedAt: new Date().toISOString(),
-        rankingCount: basePlayers.length,
-        beatAdpCount: beatAdpRows.length,
-        draftSharksCount: draftSharksRows.length,
-        matchedBeatAdp: beatAdpMerge.matched,
-        matchedDraftSharks: draftSharksMerge.matched,
         rankingPlayers: basePlayers,
         beatAdpRows,
-        draftSharksRows,
-        players: beatAdpMerge.players
+        draftSharksRows
       });
-      alert(`Imported ${draftSharksRows.length} Draft Sharks rows and matched ${draftSharksMerge.matched} players.`);
+      savePlayerData(nextData);
+      alert(`Imported ${draftSharksRows.length} Draft Sharks rows and matched ${nextData.matchedDraftSharks} players.`);
     } catch {
       alert("Could not import that Draft Sharks CSV.");
     }
   });
+}
+
+function importGenericRankingSource(file) {
+  if (!file) return;
+
+  const defaultName = file.name.replace(/\.[^.]+$/g, "").replace(/[-_]+/g, " ").trim() || "Custom Rankings";
+  const sourceName = prompt("Ranking source name?", defaultName);
+  if (!sourceName) return;
+
+  const weightInput = prompt("Source weight? Use 45 for FantasyPros-level, 55 for Draft Sharks-level, lower for weaker sources.", String(DEFAULT_CUSTOM_RANKING_WEIGHT));
+  const weight = normalizeSourceWeight(weightInput, DEFAULT_CUSTOM_RANKING_WEIGHT);
+  if (!weight) {
+    alert("Weight must be a positive number.");
+    return;
+  }
+
+  readTextFile(file, (text) => {
+    try {
+      const rows = loadGenericRankingRowsFromCsv(text, sourceName);
+      if (!rows.length) {
+        alert("No usable ranking rows were found. The CSV needs rank, player/name, team, and position columns.");
+        return;
+      }
+
+      const sourceId = toSourceId(sourceName);
+      const existingSources = getActiveRankingSources().filter((source) => source.id !== sourceId);
+      const rankingSources = [
+        ...existingSources,
+        {
+          id: sourceId,
+          name: sourceName.trim(),
+          fileName: file.name,
+          importedAt: new Date().toISOString(),
+          weight,
+          rows
+        }
+      ];
+      const nextData = rebuildPlayerData({
+        ...getPlayerDataMeta(),
+        importedAt: new Date().toISOString(),
+        rankingPlayers: getBaseRankingPlayers(),
+        beatAdpRows: playerData?.beatAdpRows ?? [],
+        draftSharksRows: playerData?.draftSharksRows ?? [],
+        rankingSources
+      });
+      savePlayerData(nextData);
+      alert(`Imported ${rows.length} ${sourceName} rows and matched ${nextData.sourceMatches[sourceId] ?? 0} active players.`);
+    } catch {
+      alert("Could not import that ranking source CSV.");
+    }
+  });
+}
+
+function updateRankingSourceWeight(sourceId, value) {
+  if (!playerData) return;
+
+  const weight = normalizeSourceWeight(value, null);
+  if (!weight) return;
+
+  const rankingSources = getActiveRankingSources().map((source) => (
+    source.id === sourceId ? { ...source, weight } : source
+  ));
+  const nextData = rebuildPlayerData({
+    ...getPlayerDataMeta(),
+    importedAt: new Date().toISOString(),
+    rankingPlayers: getBaseRankingPlayers(),
+    beatAdpRows: playerData.beatAdpRows ?? [],
+    draftSharksRows: playerData.draftSharksRows ?? [],
+    rankingSources
+  });
+  savePlayerData(nextData);
+}
+
+function removeRankingSource(sourceId) {
+  if (!playerData) return;
+  const source = getActiveRankingSources().find((candidate) => candidate.id === sourceId);
+  if (!source || ["fantasy-pros", "draft-sharks"].includes(source.id)) return;
+  if (!confirm(`Remove ${source.name} from the blended rankings?`)) return;
+
+  const rankingSources = getCustomRankingSources().filter((candidate) => candidate.id !== sourceId);
+  const nextData = rebuildPlayerData({
+    ...getPlayerDataMeta(),
+    importedAt: new Date().toISOString(),
+    rankingPlayers: getBaseRankingPlayers(),
+    beatAdpRows: playerData.beatAdpRows ?? [],
+    draftSharksRows: playerData.draftSharksRows ?? [],
+    rankingSources
+  });
+  savePlayerData(nextData);
+}
+
+function getPlayerDataMeta() {
+  return {
+    rankingsFileName: playerData?.rankingsFileName ?? "Bundled FantasyPros rankings",
+    rankingsImportedAt: playerData?.rankingsImportedAt ?? null,
+    beatAdpFileName: playerData?.beatAdpFileName ?? null,
+    beatAdpImportedAt: playerData?.beatAdpImportedAt ?? null,
+    draftSharksFileName: playerData?.draftSharksFileName ?? null,
+    draftSharksImportedAt: playerData?.draftSharksImportedAt ?? null
+  };
+}
+
+function rebuildPlayerData(options) {
+  const rankingPlayers = options.rankingPlayers?.length ? options.rankingPlayers.map(stripToBaseRankingPlayer) : fantasyProsPlayers.map(stripToBaseRankingPlayer);
+  const beatAdpRows = options.beatAdpRows ?? [];
+  const draftSharksRows = options.draftSharksRows ?? [];
+  const rankingSources = normalizeRankingSources(options.rankingSources, rankingPlayers, draftSharksRows, options);
+  const sourceMerge = mergePlayersWithRankingSources(rankingPlayers, rankingSources);
+  const beatAdpMerge = mergePlayersWithBeatAdp(sourceMerge.players, beatAdpRows);
+
+  return {
+    schemaVersion: 2,
+    importedAt: options.importedAt ?? new Date().toISOString(),
+    rankingsFileName: options.rankingsFileName ?? "Bundled FantasyPros rankings",
+    rankingsImportedAt: options.rankingsImportedAt ?? null,
+    beatAdpFileName: options.beatAdpFileName ?? null,
+    beatAdpImportedAt: options.beatAdpImportedAt ?? null,
+    draftSharksFileName: options.draftSharksFileName ?? null,
+    draftSharksImportedAt: options.draftSharksImportedAt ?? null,
+    rankingCount: rankingPlayers.length,
+    beatAdpCount: beatAdpRows.length,
+    draftSharksCount: draftSharksRows.length,
+    matchedBeatAdp: beatAdpMerge.matched,
+    matchedDraftSharks: sourceMerge.sourceMatches["draft-sharks"] ?? 0,
+    sourceMatches: sourceMerge.sourceMatches,
+    rankingPlayers,
+    beatAdpRows,
+    draftSharksRows,
+    rankingSources,
+    players: beatAdpMerge.players
+  };
+}
+
+function normalizeRankingSources(sources, rankingPlayers, draftSharksRows, meta = {}) {
+  const existing = Array.isArray(sources) ? sources : getActiveRankingSources();
+  const byId = new Map(existing.map((source) => [source.id, source]));
+  const fantasyPros = byId.get("fantasy-pros");
+  const draftSharks = byId.get("draft-sharks");
+  const customSources = existing
+    .filter((source) => !["fantasy-pros", "draft-sharks"].includes(source.id))
+    .map(normalizeRankingSource)
+    .filter(Boolean);
+
+  return [
+    {
+      id: "fantasy-pros",
+      name: "FantasyPros",
+      fileName: meta.rankingsFileName ?? playerData?.rankingsFileName ?? "Bundled FantasyPros rankings",
+      importedAt: meta.rankingsImportedAt ?? playerData?.rankingsImportedAt ?? null,
+      weight: normalizeSourceWeight(fantasyPros?.weight, DEFAULT_FANTASYPROS_WEIGHT),
+      rows: rankingPlayers.map((player) => ({
+        name: player.name,
+        team: player.team,
+        position: player.position,
+        sourceRank: player.fantasyProsRank ?? player.rank,
+        bye: player.bye,
+        tier: player.tier,
+        adp: player.adp
+      }))
+    },
+    ...(draftSharksRows.length ? [{
+      id: "draft-sharks",
+      name: "Draft Sharks",
+      fileName: meta.draftSharksFileName ?? playerData?.draftSharksFileName ?? "Draft Sharks rankings",
+      importedAt: meta.draftSharksImportedAt ?? playerData?.draftSharksImportedAt ?? null,
+      weight: normalizeSourceWeight(draftSharks?.weight, DEFAULT_DRAFT_SHARKS_WEIGHT),
+      rows: draftSharksRows.map((row) => ({
+        ...row,
+        sourceRank: row.draftSharksRank
+      }))
+    }] : []),
+    ...customSources
+  ];
+}
+
+function normalizeRankingSource(source) {
+  if (!source?.id || !source?.name || !Array.isArray(source.rows)) return null;
+  return {
+    id: source.id,
+    name: source.name,
+    fileName: source.fileName ?? null,
+    importedAt: source.importedAt ?? null,
+    weight: normalizeSourceWeight(source.weight, DEFAULT_CUSTOM_RANKING_WEIGHT),
+    rows: source.rows
+      .map((row) => ({
+        ...row,
+        team: normalizeTeam(row.team),
+        position: row.position === "DST" ? "DEF" : row.position,
+        sourceRank: parseNumber(row.sourceRank ?? row.rank)
+      }))
+      .filter((row) => row.name && row.team && row.position && row.sourceRank)
+  };
+}
+
+function getActiveRankingSources() {
+  if (playerData?.rankingSources?.length) return playerData.rankingSources.map(normalizeRankingSource).filter(Boolean);
+
+  const rankingPlayers = getBaseRankingPlayers();
+  return normalizeRankingSources([], rankingPlayers, playerData?.draftSharksRows ?? [], getPlayerDataMeta());
+}
+
+function getCustomRankingSources() {
+  return getActiveRankingSources().filter((source) => !["fantasy-pros", "draft-sharks"].includes(source.id));
+}
+
+function mergePlayersWithRankingSources(players, rankingSources) {
+  const sourceMatches = {};
+  const sourceMaps = rankingSources.map((source) => ({
+    source,
+    byKey: new Map(source.rows.map((row) => [playerKey(row.name, row.team), row]))
+  }));
+
+  const mergedPlayers = players.map((player) => {
+    const base = stripToBaseRankingPlayer(player);
+    const sourceRanks = {};
+    let weightedRank = 0;
+    let totalWeight = 0;
+    let draftSharksFields = {};
+
+    for (const { source, byKey } of sourceMaps) {
+      const row = byKey.get(playerKey(base.name, base.team));
+      if (!row) continue;
+
+      const sourceRank = parseNumber(row.sourceRank ?? row.rank);
+      const weight = normalizeSourceWeight(source.weight, 0);
+      if (!sourceRank || !weight) continue;
+
+      sourceMatches[source.id] = (sourceMatches[source.id] ?? 0) + 1;
+      weightedRank += sourceRank * weight;
+      totalWeight += weight;
+      sourceRanks[source.id] = sourceRank;
+
+      if (source.id === "draft-sharks") {
+        draftSharksFields = {
+          draftSharksRank: row.draftSharksRank,
+          draftSharksAdp: row.draftSharksAdp,
+          draftSharksGames: row.draftSharksGames,
+          draftSharksBye: row.draftSharksBye,
+          draftSharksSos: row.draftSharksSos,
+          draftSharksInjuryRisk: row.draftSharksInjuryRisk,
+          draftSharksFloor: row.draftSharksFloor,
+          draftSharksConsensusProjection: row.draftSharksConsensusProjection,
+          draftSharksProjection: row.draftSharksProjection,
+          draftSharksCeiling: row.draftSharksCeiling,
+          draftSharks3dValue: row.draftSharks3dValue
+        };
+      }
+    }
+
+    return {
+      ...base,
+      ...draftSharksFields,
+      sourceRanks,
+      sourceCount: Object.keys(sourceRanks).length,
+      compositeRank: totalWeight ? weightedRank / totalWeight : base.rank
+    };
+  });
+
+  return { players: applyCompositeRanks(mergedPlayers), sourceMatches };
 }
 
 function resetImportedPlayerData() {
@@ -530,6 +757,45 @@ function loadDraftSharksRowsFromCsv(text) {
     .filter(Boolean);
 }
 
+function loadGenericRankingRowsFromCsv(text, sourceName) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map((header) => normalizeHeader(header));
+  const rankIndex = findHeaderIndex(headers, ["rank", "overall", "overallrank", "ovr", "ecr"]);
+  const nameIndex = findHeaderIndex(headers, ["player", "playername", "name"]);
+  const teamIndex = findHeaderIndex(headers, ["team", "nflteam", "tm"]);
+  const positionIndex = findHeaderIndex(headers, ["pos", "position"]);
+  const byeIndex = findHeaderIndex(headers, ["bye", "byeweek"]);
+  const tierIndex = findHeaderIndex(headers, ["tier"]);
+  const adpIndex = findHeaderIndex(headers, ["adp", "avgadp", "averageadp"]);
+
+  if ([rankIndex, nameIndex, teamIndex, positionIndex].some((index) => index === -1)) return [];
+
+  return rows
+    .slice(1)
+    .map((cells) => {
+      const sourceRank = parseNumber(cells[rankIndex]);
+      const name = String(cells[nameIndex] ?? "").trim();
+      const team = normalizeTeam(cells[teamIndex]);
+      let position = String(cells[positionIndex] ?? "").trim().replace(/\d+$/g, "");
+      if (position === "DST") position = "DEF";
+      if (!sourceRank || !name || !team || !position || position === "K") return null;
+
+      return {
+        sourceName,
+        sourceRank,
+        name,
+        team,
+        position,
+        bye: byeIndex === -1 ? null : parseNumber(cells[byeIndex]),
+        tier: tierIndex === -1 ? null : parseNumber(cells[tierIndex]),
+        adp: adpIndex === -1 ? null : parseNumber(cells[adpIndex])
+      };
+    })
+    .filter(Boolean);
+}
+
 function getBaseRankingPlayers() {
   if (playerData?.rankingPlayers?.length) return playerData.rankingPlayers;
   return fantasyProsPlayers.map(stripToBaseRankingPlayer);
@@ -548,6 +814,8 @@ function stripToBaseRankingPlayer(player) {
     draftSharksProjection,
     draftSharksCeiling,
     draftSharks3dValue,
+    sourceRanks,
+    sourceCount,
     ...base
   } = player;
   const rank = player.fantasyProsRank ?? player.rank;
@@ -578,7 +846,7 @@ function mergePlayersWithDraftSharks(players, draftSharksRows) {
     return {
       ...stripToBaseRankingPlayer(player),
       fantasyProsRank,
-      compositeRank: (draftSharks.draftSharksRank * DRAFT_SHARKS_WEIGHT) + (fantasyProsRank * FANTASYPROS_WEIGHT),
+      compositeRank: ((draftSharks.draftSharksRank * DEFAULT_DRAFT_SHARKS_WEIGHT) + (fantasyProsRank * DEFAULT_FANTASYPROS_WEIGHT)) / (DEFAULT_DRAFT_SHARKS_WEIGHT + DEFAULT_FANTASYPROS_WEIGHT),
       draftSharksRank: draftSharks.draftSharksRank,
       draftSharksAdp: draftSharks.draftSharksAdp,
       draftSharksGames: draftSharks.draftSharksGames,
@@ -684,11 +952,25 @@ function parseCsv(text) {
   return rows;
 }
 
+function normalizeHeader(value) {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function findHeaderIndex(headers, candidates) {
+  return headers.findIndex((header) => candidates.includes(header));
+}
+
 function parseNumber(value) {
   const text = String(value ?? "").trim();
   if (!text || text === "-" || text === "\u2014") return null;
   const number = Number(text);
   return Number.isFinite(number) ? number : null;
+}
+
+function normalizeSourceWeight(value, fallback) {
+  const weight = parseNumber(value);
+  if (weight && weight > 0) return weight;
+  return fallback;
 }
 
 function normalizeTeam(team) {
@@ -714,6 +996,14 @@ function toPlayerId(name, position, team) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+function toSourceId(name) {
+  const id = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  return id ? `custom-${id}` : `custom-${Date.now()}`;
 }
 
 function resetDraft() {
@@ -873,7 +1163,8 @@ function getPlayerDataStatus() {
     };
   }
 
-  const rankings = playerData.rankingsFileName || "Imported rankings";
+  const sourceCount = getActiveRankingSources().length;
+  const rankings = `${sourceCount} ranking source${sourceCount === 1 ? "" : "s"}`;
   const draftSharks = playerData.draftSharksFileName ? `Draft Sharks: ${playerData.draftSharksFileName}` : "No imported Draft Sharks file";
   const adp = playerData.beatAdpFileName ? `ADP: ${playerData.beatAdpFileName}` : "No imported ADP file";
   const matched = Number(playerData.matchedBeatAdp ?? 0);
@@ -1395,6 +1686,7 @@ function renderProfileSelect(teamSlot, field, label, value) {
 
 function renderDataImportPanel() {
   const status = getPlayerDataStatus();
+  const sources = getActiveRankingSources();
   return `
     <section class="panel data-panel">
       <div class="panel-heading">
@@ -1404,17 +1696,39 @@ function renderDataImportPanel() {
       <div class="data-actions">
         <button class="primary-lite" data-action="choose-rankings-import">Import Rankings CSV</button>
         <button class="secondary" data-action="choose-draft-sharks-import">Import Draft Sharks CSV</button>
+        <button class="secondary" data-action="choose-generic-ranking-import">Import Ranking Source</button>
         <button class="secondary" data-action="choose-adp-import">Import ADP CSV</button>
         <button class="secondary" data-action="reset-player-data" ${playerData ? "" : "disabled"}>Use Bundled Data</button>
       </div>
       <input class="file-input" type="file" accept=".csv,text/csv" data-input="rankings-import" />
       <input class="file-input" type="file" accept=".csv,text/csv" data-input="draft-sharks-import" />
+      <input class="file-input" type="file" accept=".csv,text/csv" data-input="generic-ranking-import" />
       <input class="file-input" type="file" accept=".csv,text/csv" data-input="adp-import" />
+      <div class="source-list">
+        ${sources.map(renderRankingSourceRow).join("")}
+      </div>
       <div class="data-status">
         <strong>${status.title}</strong>
         <span>${status.detail}</span>
       </div>
     </section>
+  `;
+}
+
+function renderRankingSourceRow(source) {
+  const matchCount = playerData?.sourceMatches?.[source.id];
+  return `
+    <div class="source-row">
+      <div>
+        <strong>${escapeHtml(source.name)}</strong>
+        <em>${escapeHtml(source.fileName ?? "Bundled source")}${matchCount !== undefined ? ` - ${matchCount} matches` : ""}</em>
+      </div>
+      <label>
+        <span>Weight</span>
+        <input type="number" min="1" max="100" step="1" value="${source.weight}" data-source-weight="${source.id}" ${playerData ? "" : "disabled"} />
+      </label>
+      ${source.id.startsWith("custom-") ? `<button class="mini-button danger-mini" data-remove-source="${source.id}">Remove</button>` : ""}
+    </div>
   `;
 }
 
@@ -1557,6 +1871,7 @@ function renderPlayerRow(player, meta, canDraft, currentPick = state.picks.lengt
         <span class="player-stats">
           <span>Rank ${player.rank}</span>
           ${player.draftSharksRank ? `<span>DS ${player.draftSharksRank}</span>` : ""}
+          ${player.sourceCount > 1 ? `<span>${player.sourceCount} src</span>` : ""}
           <span>ADP ${formatAdp(player.adp)}</span>
           <span class="${getValueClass(player, currentPick)}">${formatValue(player, currentPick)}</span>
         </span>
@@ -2378,6 +2693,17 @@ function bindEvents() {
   app.querySelector("[data-input='draft-sharks-import']")?.addEventListener("change", (event) => {
     importDraftSharksRankings(event.target.files?.[0]);
     event.target.value = "";
+  });
+  app.querySelector("[data-action='choose-generic-ranking-import']")?.addEventListener("click", () => app.querySelector("[data-input='generic-ranking-import']")?.click());
+  app.querySelector("[data-input='generic-ranking-import']")?.addEventListener("change", (event) => {
+    importGenericRankingSource(event.target.files?.[0]);
+    event.target.value = "";
+  });
+  app.querySelectorAll("[data-source-weight]").forEach((input) => {
+    input.addEventListener("change", (event) => updateRankingSourceWeight(event.target.dataset.sourceWeight, event.target.value));
+  });
+  app.querySelectorAll("[data-remove-source]").forEach((button) => {
+    button.addEventListener("click", () => removeRankingSource(button.dataset.removeSource));
   });
   app.querySelector("[data-action='reset-player-data']")?.addEventListener("click", resetImportedPlayerData);
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);

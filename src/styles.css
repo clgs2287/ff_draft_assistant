@@ -1089,6 +1089,63 @@ h2 {
   cursor: default;
 }
 
+.source-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(8, 16, 27, 0.52);
+}
+
+.source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid rgba(159, 181, 208, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.source-row strong,
+.source-row em {
+  display: block;
+}
+
+.source-row strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.source-row em,
+.source-row label span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.source-row label {
+  display: grid;
+  gap: 4px;
+}
+
+.source-row input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #071321;
+  color: var(--ink);
+  font-weight: 850;
+  text-align: center;
+}
+
+.source-row input:disabled {
+  opacity: 0.55;
+}
+
 .data-status {
   display: grid;
   gap: 4px;
@@ -1319,6 +1376,14 @@ h2 {
 
   .data-actions {
     grid-template-columns: 1fr;
+  }
+
+  .source-row {
+    grid-template-columns: minmax(0, 1fr) 92px;
+  }
+
+  .source-row .mini-button {
+    grid-column: 1 / -1;
   }
 
   .tabs {
