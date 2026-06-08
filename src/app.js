@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v41";
+const APP_CACHE_VERSION = "ward19-draft-v42";
 const DRAFT_SHARKS_WEIGHT = 0.55;
 const FANTASYPROS_WEIGHT = 0.45;
 const BOARD_LIMIT = 220;
@@ -62,6 +62,7 @@ function defaultState() {
     teamNames: defaultTeamNames,
     teamProfiles: Array.from({ length: leagueSettings.teams }, () => ({ ...DEFAULT_TEAM_PROFILE })),
     teamSort: "roster",
+    draftLabResult: null,
     liveFilter: "ALL",
     positionFilter: "ALL",
     strategyMode: "balanced",
@@ -720,6 +721,92 @@ function resetDraft() {
   setState({ ...defaultState(), mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamProfiles: state.teamProfiles, teamSort: state.teamSort });
 }
 
+function runDraftLab(mockCount = 25) {
+  if (!state.mySlot) return;
+
+  const runs = Array.from({ length: mockCount }, () => runSingleDraftLabMock());
+  const result = summarizeDraftLabRuns(runs);
+  setState({ draftLabResult: result, activeView: "lab" });
+}
+
+function runSingleDraftLabMock() {
+  const players = getPlayerPool();
+  let picks = [];
+  const totalPicks = getTotalPicks();
+
+  while (picks.length < totalPicks) {
+    const currentPick = picks.length + 1;
+    const pickInfo = getPickInfo(currentPick);
+    const available = getAvailablePlayers(players, picks);
+    const roster = state.mySlot ? buildRoster(picks, state.mySlot) : buildRoster([], 1);
+    const upcoming = getMyUpcomingPicks(currentPick, state.mySlot);
+    const nextTargetPick = getRecommendationTargetPick(currentPick, upcoming);
+    const player = pickInfo.teamSlot === state.mySlot
+      ? recommendPlayers(players, picks, roster, currentPick, 1, nextTargetPick, state.strategyMode)[0]
+      : chooseMockPlayer(available, picks, pickInfo);
+
+    if (!player) break;
+    picks = [...picks, { ...pickInfo, player, mocked: pickInfo.teamSlot !== state.mySlot }];
+  }
+
+  const myPicks = picks.filter((pick) => pick.teamSlot === state.mySlot);
+  const myRoster = buildRoster(picks, state.mySlot);
+  const recap = getDraftRecap(myPicks, myRoster);
+  const counts = getPositionCounts(myPicks);
+
+  return { picks, myPicks, myRoster, recap, counts };
+}
+
+function summarizeDraftLabRuns(runs) {
+  const gradeCounts = countBy(runs, (run) => run.recap.grade);
+  const avgScore = average(runs.map((run) => run.recap.score));
+  const rosterShapes = countBy(runs, (run) => `QB ${run.counts.QB}, RB ${run.counts.RB}, WR ${run.counts.WR}, TE ${run.counts.TE}, DEF ${run.counts.DEF}`);
+  const firstFive = countBy(runs, (run) => run.myPicks.slice(0, 5).map((pick) => pick.player.name).join(" / "));
+  const landedPlayers = countBy(runs.flatMap((run) => run.myPicks.map((pick) => pick.player.name)), (name) => name);
+  const thinFlags = {
+    rbThin: runs.filter((run) => run.counts.RB < 4).length,
+    wrThin: runs.filter((run) => run.counts.WR < 5).length,
+    noQb: runs.filter((run) => run.counts.QB < 1).length,
+    noTe: runs.filter((run) => run.counts.TE < 1).length,
+    noDef: runs.filter((run) => run.counts.DEF < 1).length
+  };
+
+  return {
+    createdAt: new Date().toISOString(),
+    mockCount: runs.length,
+    slot: state.mySlot,
+    strategyMode: state.strategyMode,
+    avgScore,
+    gradeCounts,
+    topRosterShapes: topCounts(rosterShapes, 4),
+    topFirstFive: topCounts(firstFive, 4),
+    topPlayers: topCounts(landedPlayers, 10),
+    thinFlags
+  };
+}
+
+function countBy(items, getKey) {
+  return items.reduce((counts, item) => {
+    const key = getKey(item);
+    if (!key) return counts;
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function topCounts(counts, limit) {
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([label, count]) => ({ label, count }));
+}
+
+function average(values) {
+  const clean = values.filter((value) => Number.isFinite(value));
+  if (!clean.length) return 0;
+  return clean.reduce((sum, value) => sum + value, 0) / clean.length;
+}
+
 function getCurrentContext() {
   const currentPick = state.picks.length + 1;
   const totalPicks = getTotalPicks();
@@ -746,6 +833,7 @@ function render() {
         ${state.activeView === "roster" ? renderRosterView(ctx) : ""}
         ${state.activeView === "plan" ? renderPlanView(ctx) : ""}
         ${state.activeView === "recap" ? renderRecapView(ctx) : ""}
+        ${state.activeView === "lab" ? renderDraftLabView(ctx) : ""}
         ${state.activeView === "teams" ? renderTeamsView() : ""}
       </section>
     </main>
@@ -836,6 +924,7 @@ function renderTabs() {
     ["roster", "Roster"],
     ["plan", "Plan"],
     ["recap", "Recap"],
+    ["lab", "Lab"],
     ["teams", "Teams"]
   ];
   return `
@@ -1155,6 +1244,72 @@ function renderRecapBlock(title, items) {
       ${items.length ? items.map((item) => `<p>${item}</p>`).join("") : "<p>Nothing major.</p>"}
     </article>
   `;
+}
+
+function renderDraftLabView() {
+  const result = state.draftLabResult;
+  const activeStrategy = getActiveStrategyMode();
+
+  return `
+    <section class="panel lab-panel">
+      <div class="panel-heading">
+        <h2>Draft Lab</h2>
+        <span>${state.mySlot ? `Slot ${state.mySlot} - ${activeStrategy.label}` : "Set your slot"}</span>
+      </div>
+      <div class="lab-hero">
+        <div>
+          <span class="label">Batch Mock</span>
+          <strong>${result ? `${result.mockCount} mocks` : "No batch yet"}</strong>
+          <em>${state.mySlot ? "Runs auto-drafts using current strategy and team profiles." : "Choose your draft slot first."}</em>
+        </div>
+        <button class="primary-lite" data-action="run-draft-lab" ${state.mySlot ? "" : "disabled"}>Run 25 Mocks</button>
+      </div>
+      ${result ? renderDraftLabResult(result) : "<p class='empty'>Run a batch to see common builds, players, and weak spots.</p>"}
+    </section>
+  `;
+}
+
+function renderDraftLabResult(result) {
+  return `
+    <div class="lab-score">
+      <strong>${Math.round(result.avgScore)}</strong>
+      <span>Average score</span>
+      <em>${formatLabTimestamp(result.createdAt)}</em>
+    </div>
+    <div class="lab-grid">
+      ${renderLabBlock("Grades", topCounts(result.gradeCounts, 5).map((item) => `${item.label}: ${item.count}/${result.mockCount}`))}
+      ${renderLabBlock("Common Builds", result.topRosterShapes.map((item) => `${item.label} - ${item.count}x`))}
+      ${renderLabBlock("Common Starts", result.topFirstFive.map((item) => `${item.count}x - ${item.label}`))}
+      ${renderLabBlock("Frequent Players", result.topPlayers.slice(0, 6).map((item) => `${item.label} - ${item.count}x`))}
+      ${renderLabBlock("Thin Spots", getDraftLabThinSpotItems(result))}
+    </div>
+  `;
+}
+
+function renderLabBlock(title, items) {
+  return `
+    <article class="lab-block">
+      <h3>${title}</h3>
+      ${items.length ? items.map((item) => `<p>${item}</p>`).join("") : "<p>Nothing major.</p>"}
+    </article>
+  `;
+}
+
+function getDraftLabThinSpotItems(result) {
+  const flags = result.thinFlags;
+  return [
+    `RB under 4: ${flags.rbThin}/${result.mockCount}`,
+    `WR under 5: ${flags.wrThin}/${result.mockCount}`,
+    `No QB: ${flags.noQb}/${result.mockCount}`,
+    `No TE: ${flags.noTe}/${result.mockCount}`,
+    `No DEF: ${flags.noDef}/${result.mockCount}`
+  ];
+}
+
+function formatLabTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function renderTeamsView() {
@@ -1515,6 +1670,7 @@ function getDraftRecap(myPicks, roster) {
 
   return {
     grade: getRecapGrade(gradeScore),
+    score: gradeScore,
     summary: getRecapSummary(gradeScore, myPicks.length),
     shape: [
       `QB ${positionCounts.QB}, RB ${positionCounts.RB}, WR ${positionCounts.WR}, TE ${positionCounts.TE}, DEF ${positionCounts.DEF}`,
@@ -2216,6 +2372,7 @@ function bindEvents() {
   app.querySelector("[data-action='reset-player-data']")?.addEventListener("click", resetImportedPlayerData);
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);
+  app.querySelector("[data-action='run-draft-lab']")?.addEventListener("click", () => runDraftLab(25));
   app.querySelector("[data-input='search']")?.addEventListener("input", (event) => {
     state.search = event.target.value;
     saveState();
