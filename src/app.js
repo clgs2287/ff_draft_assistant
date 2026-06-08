@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v45";
+const APP_CACHE_VERSION = "ward19-draft-v46";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1181,10 +1181,11 @@ function render() {
   app.innerHTML = `
     <main class="shell">
       ${renderHeader(ctx)}
-      ${renderSetup()}
+      ${state.activeView === "live" ? "" : renderSetup()}
       ${renderTabs()}
       <section class="view">
         ${state.activeView === "draft" ? renderDraftView(ctx) : ""}
+        ${state.activeView === "live" ? renderDraftDayView(ctx) : ""}
         ${state.activeView === "available" ? renderAvailableView(ctx) : ""}
         ${state.activeView === "roster" ? renderRosterView(ctx) : ""}
         ${state.activeView === "plan" ? renderPlanView(ctx) : ""}
@@ -1277,6 +1278,7 @@ function getActiveStrategyMode() {
 function renderTabs() {
   const tabs = [
     ["draft", "Draft"],
+    ["live", "Live"],
     ["available", "Available"],
     ["roster", "Roster"],
     ["plan", "Plan"],
@@ -1305,6 +1307,90 @@ function renderDraftView(ctx) {
     ${renderRecentPicks()}
     ${renderCorrectionPanel(ctx)}
   `;
+}
+
+function renderDraftDayView(ctx) {
+  const positions = ["ALL", "QB", "RB", "WR", "TE", "DEF"];
+  const query = state.search.trim().toLowerCase();
+  const source = query ? ctx.available : getFocusedBoard(ctx.available);
+  const players = source
+    .filter((player) => state.liveFilter === "ALL" || player.position === state.liveFilter)
+    .filter((player) => !query || `${player.name} ${player.team} ${player.position}`.toLowerCase().includes(query))
+    .slice(0, 12);
+  const lastPick = state.picks[state.picks.length - 1];
+  const bestPick = ctx.recommendations[0];
+  const isMyPick = state.mySlot && ctx.currentInfo.teamSlot === state.mySlot;
+  const canMockNext = ctx.currentPick <= ctx.totalPicks && (!state.mySlot || !isMyPick);
+  const canMockToMe = state.mySlot && ctx.currentPick <= ctx.totalPicks && !isMyPick;
+
+  return `
+    <section class="draft-day">
+      <div class="draft-day-clock ${isMyPick ? "mine" : ""}">
+        <div>
+          <span class="label">On The Clock</span>
+          <strong>Round ${ctx.currentInfo.round}, Pick ${ctx.currentInfo.pickInRound}</strong>
+          <em>${getTeamName(ctx.currentInfo.teamSlot)}</em>
+        </div>
+        <div class="draft-day-pick">
+          <span>${isMyPick ? "You are up" : getLivePickDistanceText(ctx)}</span>
+          <strong>${Math.min(ctx.currentPick, ctx.totalPicks)}</strong>
+          <em>Overall</em>
+        </div>
+      </div>
+
+      <div class="draft-day-actions">
+        <button class="secondary" data-action="undo" ${state.picks.length ? "" : "disabled"}>Undo Last</button>
+        <button class="secondary" data-action="mock-next" ${canMockNext ? "" : "disabled"}>Auto Next</button>
+        <button class="primary-lite" data-action="mock-to-me" ${canMockToMe ? "" : "disabled"}>To My Pick</button>
+      </div>
+
+      ${bestPick ? `
+        <section class="panel draft-day-best">
+          <span class="label">Top Recommendation</span>
+          <strong>${bestPick.name}</strong>
+          <em>${bestPick.position} - ${bestPick.team} - ${formatScore(bestPick.score)} - ADP ${formatAdp(bestPick.adp)}</em>
+          <div class="reason-list compact-reasons">
+            ${getBestPickExplanation(bestPick, ctx).slice(0, 3).map((reason) => `<span>${reason}</span>`).join("")}
+          </div>
+        </section>
+      ` : ""}
+
+      <section class="panel draft-day-entry panel-accent accent-enter">
+        <div class="panel-heading">
+          <h2>Enter Pick</h2>
+          <span>${players.length} shown</span>
+        </div>
+        <input class="search live-search draft-day-search" data-input="search" value="${escapeHtml(state.search)}" placeholder="Search player, team, or position" autocomplete="off" />
+        <div class="filter-row live-filters">
+          ${positions.map((position) => `<button class="${state.liveFilter === position ? "active" : ""}" data-live-filter="${position}">${position}</button>`).join("")}
+        </div>
+        <div class="player-list compact draft-day-results">
+          ${players.length ? players.map((player) => renderPlayerRow(player, "Draft", true, ctx.currentPick)).join("") : "<p class='empty'>No matching available players.</p>"}
+        </div>
+      </section>
+
+      <section class="panel draft-day-footer">
+        <div>
+          <span class="label">Last Pick</span>
+          <strong>${lastPick ? `${lastPick.overallPick}. ${lastPick.player.name}` : "None yet"}</strong>
+          <em>${lastPick ? `${lastPick.player.position} - ${getTeamName(lastPick.teamSlot)}${lastPick.mocked ? " - mocked" : ""}` : "Ready for pick 1."}</em>
+        </div>
+        <div>
+          <span class="label">Your Slot</span>
+          <strong>${state.mySlot ? state.mySlot : "Not set"}</strong>
+          <em>${state.mySlot ? getLivePickDistanceText(ctx) : "Set slot from Draft tab"}</em>
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+function getLivePickDistanceText(ctx) {
+  if (!state.mySlot) return "Set slot";
+  if (ctx.upcoming[0] === ctx.currentPick) return "Now";
+  if (!ctx.upcoming.length) return "Done";
+  const distance = ctx.upcoming[0] - ctx.currentPick;
+  return distance === 1 ? "1 pick away" : `${distance} picks away`;
 }
 
 function renderMockControls(ctx) {
