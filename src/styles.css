@@ -1050,6 +1050,14 @@ h2 {
   font-weight: 750;
 }
 
+.compare-heading p {
+  margin: 8px 0 0;
+  color: var(--ice);
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
 .compare-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

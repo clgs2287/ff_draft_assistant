@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v61";
+const APP_CACHE_VERSION = "ward19-draft-v62";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1928,6 +1928,7 @@ function renderDraftLabView() {
 function renderStrategyCompareResult(compareResult) {
   const winner = compareResult.winner ? getStrategyModeLabel(compareResult.winner) : "No winner";
   const strategies = [...compareResult.strategies].sort((a, b) => b.avgScore - a.avgScore);
+  const whyItWon = getStrategyCompareWhyItWon(strategies[0], strategies.slice(1));
   return `
     <section class="compare-panel">
       <div class="compare-heading">
@@ -1935,6 +1936,7 @@ function renderStrategyCompareResult(compareResult) {
           <span class="label">Strategy Compare</span>
           <strong>${winner}</strong>
           <em>${compareResult.mockCount} mocks each - ${formatLabTimestamp(compareResult.createdAt)}</em>
+          <p>${whyItWon}</p>
         </div>
       </div>
       <div class="compare-grid">
@@ -1942,6 +1944,32 @@ function renderStrategyCompareResult(compareResult) {
       </div>
     </section>
   `;
+}
+
+function getStrategyCompareWhyItWon(winner, others) {
+  if (!winner || !others.length) return "Run compare to see which draft shape has the cleanest path.";
+
+  const avgOtherScore = average(others.map((result) => result.avgScore));
+  const avgOtherA = average(others.map((result) => result.gradeCounts.A ?? 0));
+  const avgOtherThin = average(others.map(getStrategyCompareThinTotal));
+  const avgOtherTopRepeat = average(others.map((result) => result.topPlayers[0]?.count ?? 0));
+  const winnerA = winner.gradeCounts.A ?? 0;
+  const winnerThin = getStrategyCompareThinTotal(winner);
+  const winnerTopRepeat = winner.topPlayers[0]?.count ?? 0;
+  const reasons = [];
+
+  if (winner.avgScore >= avgOtherScore + 1) reasons.push(`${Math.round(winner.avgScore)} average score`);
+  if (winnerA >= avgOtherA + 5) reasons.push(`${winnerA}/${winner.mockCount} A grades`);
+  if (winnerThin < avgOtherThin) reasons.push("fewer thin-roster flags");
+  if (winnerTopRepeat <= avgOtherTopRepeat - 6) reasons.push("less player concentration");
+  if (winner.topRosterShapes[0]) reasons.push(`clean ${winner.topRosterShapes[0].label} shape`);
+
+  return `Why it won: ${reasons.slice(0, 3).join(", ") || "small edge across score and roster shape"}.`;
+}
+
+function getStrategyCompareThinTotal(result) {
+  const flags = result.thinFlags;
+  return flags.rbThin + flags.wrThin + flags.noQb + flags.noTe + flags.noDef;
 }
 
 function renderStrategyCompareCard(result, isWinner) {
