@@ -349,8 +349,6 @@ function getTierDropBonus(player, available) {
 }
 
 function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode) {
-  if (strategyMode === "balanced") return 0;
-
   const drafted = getRosterCount(roster);
   const round = Math.max(1, Math.ceil(currentPick / leagueSettings.teams));
   const rosterPlayers = getRosterPlayers(roster);
@@ -360,6 +358,14 @@ function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode)
   const isValue = valueGap !== null && valueGap >= 8;
   const isMajorValue = valueGap !== null && valueGap >= 14;
   const isReach = valueGap !== null && valueGap <= -8;
+
+  if (strategyMode === "balanced") {
+    if (["QB", "TE"].includes(player.position) && roster[player.position].length === 0) {
+      if (round <= 4 && !isMajorValue) return Number(player.positionalRank) <= ELITE_ONESIE_RANK ? -18 : -28;
+      if (round === 5 && !isValue) return Number(player.positionalRank) <= ELITE_ONESIE_RANK ? -8 : -16;
+    }
+    return 0;
+  }
 
   if (strategyMode === "wr-heavy") {
     if (player.position === "WR" && wrCount < 6) return round <= 8 ? 14 : 7;
