@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v54";
+const APP_CACHE_VERSION = "ward19-draft-v56";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -174,6 +174,11 @@ function getDraftMistakeWarnings(player, pickInfo) {
     warnings.push(`${Math.round(Math.abs(valueGap))} picks early by ADP.`);
   }
 
+  const passCatcherWarning = getPassCatcherTeamWarning(player, rosterPlayers);
+  if (passCatcherWarning) {
+    warnings.push(passCatcherWarning);
+  }
+
   if (player.position === "DEF" && needs.DEF <= 0) {
     warnings.push("This team already has a defense.");
   } else if (player.position === "DEF" && round < leagueSettings.draftRounds - 1) {
@@ -205,6 +210,18 @@ function getDraftMistakeWarnings(player, pickInfo) {
   }
 
   return warnings.slice(0, 3);
+}
+
+function getPassCatcherTeamWarning(player, rosterPlayers) {
+  if (!["WR", "TE"].includes(player.position) || !player.team) return "";
+  const currentPassCatchers = rosterPlayers.filter((candidate) => (
+    ["WR", "TE"].includes(candidate.position)
+    && candidate.team
+    && candidate.team === player.team
+  ));
+  if (currentPassCatchers.length < 2) return "";
+  const names = currentPassCatchers.slice(0, 2).map((candidate) => candidate.name).join(" and ");
+  return `Team concentration: ${names} are already ${player.team} pass catchers. Drafting ${player.name} would make 3.`;
 }
 
 function fillsOpenRosterSlot(player, needs) {
@@ -2669,6 +2686,7 @@ function getMockDraftScore(player, needs, pickInfo, roster, profile = DEFAULT_TE
   if (player.position === "QB") score += getMockQbTendencyBonus(qbCount, round, needs, profile);
   if (player.position === "DEF") score += getMockDefenseTendencyBonus(round, needs, profile);
   score += getMockPositionBiasBonus(player, profile);
+  score += getMockFallerValueBonus(player, pickInfo);
   if (player.position === "DEF" && needs.DEF <= 0) score -= 120;
   if (player.position === "DEF" && round < 13) score -= 180;
   if (needs.BENCH <= 0 && needs[player.position] <= 0) score -= 80;
@@ -2684,10 +2702,11 @@ function getMockRandomness(player, pickInfo, profile = DEFAULT_TEAM_PROFILE) {
   const usefulAdp = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12;
   const adpGap = usefulAdp ? pickInfo.overallPick - adp : 0;
   const openingPicks = pickInfo.overallPick <= 4;
-  const earlyRounds = round <= 3;
+  const firstTwoRounds = round <= 2;
+  const earlyRounds = round <= 6;
   const lateRounds = round >= 10;
   const profileSpread = profile.reach === "chaotic" ? 1.45 : profile.reach === "conservative" ? 0.65 : 1;
-  const spread = (openingPicks ? 8 : earlyRounds ? 18 : lateRounds ? 58 : 38) * profileSpread;
+  const spread = (openingPicks ? 6 : firstTwoRounds ? 10 : earlyRounds ? 22 : lateRounds ? 58 : 38) * profileSpread;
   let noise = (Math.random() - 0.5) * spread;
 
   if (player.position === "QB" && round >= 7 && Math.random() < (profile.qb === "two-plus" ? 0.3 : 0.18)) noise += 32;
@@ -2699,18 +2718,43 @@ function getMockRandomness(player, pickInfo, profile = DEFAULT_TEAM_PROFILE) {
   return noise;
 }
 
+function getMockFallerValueBonus(player, pickInfo) {
+  const adp = Number(player.adp);
+  const usefulAdp = Number.isFinite(adp) && adp <= leagueSettings.teams * leagueSettings.draftRounds + 12;
+  if (!usefulAdp) return 0;
+
+  const fall = pickInfo.overallPick - adp;
+  if (fall <= 0) return 0;
+
+  const threshold = getMockFallerThreshold(adp);
+  if (fall <= threshold) return 0;
+
+  const urgency = pickInfo.round <= 2 ? 18 : pickInfo.round <= 6 ? 13 : 8;
+  const topPlayerBonus = adp <= 24 ? 18 : adp <= 50 ? 10 : 0;
+  return Math.min(110, (fall - threshold) * urgency + topPlayerBonus);
+}
+
+function getMockFallerThreshold(marketPick) {
+  if (marketPick <= 12) return 4;
+  if (marketPick <= 24) return 6;
+  if (marketPick <= 50) return 10;
+  if (marketPick <= 100) return 14;
+  return 20;
+}
+
 function pickWeightedMockPlayer(ranked, pickInfo, profile = DEFAULT_TEAM_PROFILE) {
   if (!ranked.length) return null;
 
   const bestScore = ranked[0].score;
   const openingPicks = pickInfo.overallPick <= 4;
+  const round = pickInfo.round;
   const shortlist = openingPicks
     ? ranked.slice(0, 4)
     : ranked
       .filter((entry, index) => index < 8 || entry.score >= bestScore - 42)
       .slice(0, 14);
   const profileTemperature = profile.reach === "chaotic" ? 1.35 : profile.reach === "conservative" ? 0.72 : 1;
-  const temperature = (openingPicks ? 10 : 22) * profileTemperature;
+  const temperature = (openingPicks ? 8 : round <= 2 ? 11 : round <= 6 ? 16 : 22) * profileTemperature;
   const weighted = shortlist.map((entry) => ({
     ...entry,
     weight: Math.exp((entry.score - bestScore) / temperature)
