@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v59";
+const APP_CACHE_VERSION = "ward19-draft-v60";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1154,12 +1154,17 @@ function resetDraft() {
 function runDraftLab(mockCount = 100) {
   if (!state.mySlot) return;
 
-  const runs = Array.from({ length: mockCount }, () => runSingleDraftLabMock());
+  const exposureCounts = new Map();
+  const runs = Array.from({ length: mockCount }, (_, runIndex) => {
+    const run = runSingleDraftLabMock(exposureCounts, runIndex, mockCount);
+    updateDraftLabExposure(exposureCounts, run.myPicks);
+    return run;
+  });
   const result = summarizeDraftLabRuns(runs);
   setState({ draftLabResult: result, activeView: "lab" });
 }
 
-function runSingleDraftLabMock() {
+function runSingleDraftLabMock(exposureCounts = new Map(), runIndex = 0, mockCount = 100) {
   const players = getPlayerPool();
   let picks = [];
   const totalPicks = getTotalPicks();
@@ -1172,7 +1177,7 @@ function runSingleDraftLabMock() {
     const upcoming = getMyUpcomingPicks(currentPick, state.mySlot);
     const nextTargetPick = getRecommendationTargetPick(currentPick, upcoming);
     const player = pickInfo.teamSlot === state.mySlot
-      ? recommendPlayers(players, picks, roster, currentPick, 1, nextTargetPick, state.strategyMode)[0]
+      ? chooseDraftLabRecommendation(recommendPlayers(players, picks, roster, currentPick, 8, nextTargetPick, state.strategyMode), exposureCounts, runIndex, mockCount, pickInfo)
       : chooseMockPlayer(available, picks, pickInfo);
 
     if (!player) break;
@@ -1185,6 +1190,48 @@ function runSingleDraftLabMock() {
   const counts = getPositionCounts(myPicks);
 
   return { picks, myPicks, myRoster, recap, counts };
+}
+
+function updateDraftLabExposure(exposureCounts, myPicks) {
+  myPicks.forEach((pick) => {
+    exposureCounts.set(pick.player.id, (exposureCounts.get(pick.player.id) ?? 0) + 1);
+  });
+}
+
+function chooseDraftLabRecommendation(recommendations, exposureCounts, runIndex, mockCount, pickInfo) {
+  if (!recommendations.length) return null;
+  if (pickInfo.round <= 1 || runIndex < 8) return recommendations[0];
+
+  const bestScore = recommendations[0].score ?? 0;
+  const candidateWindow = pickInfo.round <= 5 ? 34 : 46;
+  const candidates = recommendations
+    .filter((player, index) => index < 2 || bestScore - (player.score ?? 0) <= candidateWindow)
+    .slice(0, pickInfo.round <= 5 ? 5 : 7);
+  const targetShare = getDraftLabExposureTarget(pickInfo.round);
+
+  return candidates
+    .map((player) => {
+      const exposure = exposureCounts.get(player.id) ?? 0;
+      const targetCount = Math.max(1, runIndex * targetShare);
+      const overTarget = Math.max(0, exposure - targetCount);
+      const fatigue = overTarget * getDraftLabFatigueStrength(pickInfo.round);
+      const tieBreaker = Math.random() * (pickInfo.round <= 5 ? 7 : 12);
+      return { player, adjustedScore: (player.score ?? 0) - fatigue + tieBreaker };
+    })
+    .sort((a, b) => b.adjustedScore - a.adjustedScore)[0]?.player ?? recommendations[0];
+}
+
+function getDraftLabExposureTarget(round) {
+  if (round <= 3) return 0.42;
+  if (round <= 6) return 0.34;
+  if (round <= 10) return 0.28;
+  return 0.24;
+}
+
+function getDraftLabFatigueStrength(round) {
+  if (round <= 3) return 4.5;
+  if (round <= 6) return 5.5;
+  return 6.5;
 }
 
 function summarizeDraftLabRuns(runs) {
