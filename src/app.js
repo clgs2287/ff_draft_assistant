@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v63";
+const APP_CACHE_VERSION = "ward19-draft-v64";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -2031,7 +2031,7 @@ function renderStrategyCompareCard(result, isWinner) {
       <p>${topBuild ? `${topBuild.label} - ${topBuild.count}x` : "No build data"}</p>
       <p>Thin: RB ${flags.rbThin}, WR ${flags.wrThin}, QB ${flags.noQb}, TE ${flags.noTe}, DEF ${flags.noDef}</p>
       <p>Elite QB ${result.qbTiming?.eliteQbCount ?? 0}/${result.mockCount} - Elite TE ${result.teTiming?.eliteTeCount ?? 0}/${result.mockCount}</p>
-      <p>${topExposure ? `Top exposure: ${formatPlayerExposureSummary(topExposure, result.mockCount)}` : topPlayer ? `Top repeat: ${topPlayer.label} ${topPlayer.count}x` : "No repeat data"}</p>
+      <p>${topExposure ? `Top exposure: ${formatCompareExposureSummary(topExposure, result.mockCount)}` : topPlayer ? `Top repeat: ${topPlayer.label} ${topPlayer.count}x` : "No repeat data"}</p>
     </article>
   `;
 }
@@ -2074,6 +2074,11 @@ function getDraftLabExposureItems(result) {
 
 function formatPlayerExposureSummary(exposure, mockCount) {
   return `${exposure.name} (${exposure.position} ${exposure.team}) ${exposure.count}/${mockCount}`;
+}
+
+function formatCompareExposureSummary(exposure, mockCount) {
+  const commonRound = exposure.topRounds?.[0]?.label ?? `Round ${formatOneDecimal(exposure.avgRound)}`;
+  return `${formatPlayerExposureSummary(exposure, mockCount)}, avg pick ${formatOneDecimal(exposure.avgPick)}, mostly ${commonRound}`;
 }
 
 function renderLabBlock(title, items) {
