@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v60";
+const APP_CACHE_VERSION = "ward19-draft-v61";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -65,6 +65,7 @@ function defaultState() {
     teamProfiles: Array.from({ length: leagueSettings.teams }, () => ({ ...DEFAULT_TEAM_PROFILE })),
     teamSort: "roster",
     draftLabResult: null,
+    draftLabCompareResult: null,
     liveFilter: "ALL",
     positionFilter: "ALL",
     strategyMode: "balanced",
@@ -1156,15 +1157,42 @@ function runDraftLab(mockCount = 100) {
 
   const exposureCounts = new Map();
   const runs = Array.from({ length: mockCount }, (_, runIndex) => {
-    const run = runSingleDraftLabMock(exposureCounts, runIndex, mockCount);
+    const run = runSingleDraftLabMock(exposureCounts, runIndex, mockCount, state.strategyMode);
     updateDraftLabExposure(exposureCounts, run.myPicks);
     return run;
   });
-  const result = summarizeDraftLabRuns(runs);
+  const result = summarizeDraftLabRuns(runs, state.strategyMode);
   setState({ draftLabResult: result, activeView: "lab" });
 }
 
-function runSingleDraftLabMock(exposureCounts = new Map(), runIndex = 0, mockCount = 100) {
+function runStrategyCompareLab(mockCount = 100) {
+  if (!state.mySlot) return;
+
+  const strategies = STRATEGY_MODES.map((mode) => {
+    const exposureCounts = new Map();
+    const runs = Array.from({ length: mockCount }, (_, runIndex) => {
+      const run = runSingleDraftLabMock(exposureCounts, runIndex, mockCount, mode.id);
+      updateDraftLabExposure(exposureCounts, run.myPicks);
+      return run;
+    });
+
+    return summarizeDraftLabRuns(runs, mode.id);
+  });
+
+  const sorted = [...strategies].sort((a, b) => b.avgScore - a.avgScore);
+  setState({
+    draftLabCompareResult: {
+      createdAt: new Date().toISOString(),
+      mockCount,
+      slot: state.mySlot,
+      strategies,
+      winner: sorted[0]?.strategyMode ?? null
+    },
+    activeView: "lab"
+  });
+}
+
+function runSingleDraftLabMock(exposureCounts = new Map(), runIndex = 0, mockCount = 100, strategyMode = state.strategyMode) {
   const players = getPlayerPool();
   let picks = [];
   const totalPicks = getTotalPicks();
@@ -1177,7 +1205,7 @@ function runSingleDraftLabMock(exposureCounts = new Map(), runIndex = 0, mockCou
     const upcoming = getMyUpcomingPicks(currentPick, state.mySlot);
     const nextTargetPick = getRecommendationTargetPick(currentPick, upcoming);
     const player = pickInfo.teamSlot === state.mySlot
-      ? chooseDraftLabRecommendation(recommendPlayers(players, picks, roster, currentPick, 8, nextTargetPick, state.strategyMode), exposureCounts, runIndex, mockCount, pickInfo)
+      ? chooseDraftLabRecommendation(recommendPlayers(players, picks, roster, currentPick, 8, nextTargetPick, strategyMode), exposureCounts, runIndex, mockCount, pickInfo)
       : chooseMockPlayer(available, picks, pickInfo);
 
     if (!player) break;
@@ -1234,7 +1262,7 @@ function getDraftLabFatigueStrength(round) {
   return 6.5;
 }
 
-function summarizeDraftLabRuns(runs) {
+function summarizeDraftLabRuns(runs, strategyMode = state.strategyMode) {
   const gradeCounts = countBy(runs, (run) => run.recap.grade);
   const avgScore = average(runs.map((run) => run.recap.score));
   const rosterShapes = countBy(runs, (run) => `QB ${run.counts.QB}, RB ${run.counts.RB}, WR ${run.counts.WR}, TE ${run.counts.TE}, DEF ${run.counts.DEF}`);
@@ -1253,7 +1281,7 @@ function summarizeDraftLabRuns(runs) {
     createdAt: new Date().toISOString(),
     mockCount: runs.length,
     slot: state.mySlot,
-    strategyMode: state.strategyMode,
+    strategyMode,
     avgScore,
     gradeCounts,
     topRosterShapes: topCounts(rosterShapes, 4),
@@ -1449,6 +1477,10 @@ function renderSetup() {
 
 function getActiveStrategyMode() {
   return STRATEGY_MODES.find((mode) => mode.id === state.strategyMode) ?? STRATEGY_MODES[0];
+}
+
+function getStrategyModeLabel(strategyMode) {
+  return STRATEGY_MODES.find((mode) => mode.id === strategyMode)?.label ?? strategyMode;
 }
 
 function renderTabs() {
@@ -1867,6 +1899,7 @@ function renderRecapBlock(title, items) {
 
 function renderDraftLabView() {
   const result = state.draftLabResult;
+  const compareResult = state.draftLabCompareResult;
   const activeStrategy = getActiveStrategyMode();
 
   return `
@@ -1881,10 +1914,55 @@ function renderDraftLabView() {
           <strong>${result ? `${result.mockCount} mocks` : "No batch yet"}</strong>
           <em>${state.mySlot ? "Runs auto-drafts using current strategy and team profiles." : "Choose your draft slot first."}</em>
         </div>
-        <button class="primary-lite" data-action="run-draft-lab" ${state.mySlot ? "" : "disabled"}>Run 100 Mocks</button>
+        <div class="lab-actions">
+          <button class="primary-lite" data-action="run-draft-lab" ${state.mySlot ? "" : "disabled"}>Run 100 Mocks</button>
+          <button class="secondary" data-action="run-strategy-compare" ${state.mySlot ? "" : "disabled"}>Compare</button>
+        </div>
       </div>
+      ${compareResult ? renderStrategyCompareResult(compareResult) : ""}
       ${result ? renderDraftLabResult(result) : "<p class='empty'>Run a batch to see common builds, players, and weak spots.</p>"}
     </section>
+  `;
+}
+
+function renderStrategyCompareResult(compareResult) {
+  const winner = compareResult.winner ? getStrategyModeLabel(compareResult.winner) : "No winner";
+  const strategies = [...compareResult.strategies].sort((a, b) => b.avgScore - a.avgScore);
+  return `
+    <section class="compare-panel">
+      <div class="compare-heading">
+        <div>
+          <span class="label">Strategy Compare</span>
+          <strong>${winner}</strong>
+          <em>${compareResult.mockCount} mocks each - ${formatLabTimestamp(compareResult.createdAt)}</em>
+        </div>
+      </div>
+      <div class="compare-grid">
+        ${strategies.map((result) => renderStrategyCompareCard(result, result.strategyMode === compareResult.winner)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderStrategyCompareCard(result, isWinner) {
+  const flags = result.thinFlags;
+  const topBuild = result.topRosterShapes[0];
+  const topPlayer = result.topPlayers[0];
+  const aCount = result.gradeCounts.A ?? 0;
+  const bCount = result.gradeCounts.B ?? 0;
+  const cCount = result.gradeCounts.C ?? 0;
+  return `
+    <article class="compare-card ${isWinner ? "winner" : ""}">
+      <div>
+        <span>${isWinner ? "Best" : "Strategy"}</span>
+        <strong>${getStrategyModeLabel(result.strategyMode)}</strong>
+      </div>
+      <p><b>${Math.round(result.avgScore)}</b> avg - A ${aCount}, B ${bCount}, C ${cCount}</p>
+      <p>${topBuild ? `${topBuild.label} - ${topBuild.count}x` : "No build data"}</p>
+      <p>Thin: RB ${flags.rbThin}, WR ${flags.wrThin}, QB ${flags.noQb}, TE ${flags.noTe}, DEF ${flags.noDef}</p>
+      <p>Elite QB ${result.qbTiming?.eliteQbCount ?? 0}/${result.mockCount} - Elite TE ${result.teTiming?.eliteTeCount ?? 0}/${result.mockCount}</p>
+      <p>${topPlayer ? `Top repeat: ${topPlayer.label} ${topPlayer.count}x` : "No repeat data"}</p>
+    </article>
   `;
 }
 
@@ -3154,6 +3232,7 @@ function bindEvents() {
   app.querySelector("[data-action='mock-next']")?.addEventListener("click", autoDraftNextPick);
   app.querySelector("[data-action='mock-to-me']")?.addEventListener("click", autoDraftToMyPick);
   app.querySelector("[data-action='run-draft-lab']")?.addEventListener("click", () => runDraftLab(100));
+  app.querySelector("[data-action='run-strategy-compare']")?.addEventListener("click", () => runStrategyCompareLab(100));
   app.querySelector("[data-input='search']")?.addEventListener("input", (event) => {
     state.search = event.target.value;
     saveState();

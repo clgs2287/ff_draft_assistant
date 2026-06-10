@@ -989,7 +989,7 @@ h2 {
 
 .lab-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 136px;
+  grid-template-columns: minmax(0, 1fr) minmax(136px, auto);
   gap: 12px;
   align-items: center;
   padding: 12px;
@@ -1014,6 +1014,86 @@ h2 {
   font-style: normal;
   font-weight: 750;
   line-height: 1.35;
+}
+
+.lab-actions {
+  display: grid;
+  grid-template-columns: 136px 104px;
+  gap: 8px;
+}
+
+.compare-panel {
+  border-bottom: 1px solid var(--line);
+  background: rgba(47, 131, 255, 0.045);
+}
+
+.compare-heading {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.compare-heading strong,
+.compare-heading em {
+  display: block;
+}
+
+.compare-heading strong {
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.compare-heading em {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.compare-card {
+  min-height: 182px;
+  padding: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.compare-card:last-child {
+  border-right: 0;
+}
+
+.compare-card.winner {
+  background: linear-gradient(135deg, rgba(242, 193, 78, 0.15), rgba(47, 131, 255, 0.08));
+}
+
+.compare-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.compare-card strong {
+  display: block;
+  margin-top: 3px;
+  color: #ffffff;
+  font-size: 0.95rem;
+}
+
+.compare-card p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.compare-card b {
+  color: var(--gold);
 }
 
 .lab-score {
@@ -1684,6 +1764,24 @@ h2 {
 
   .lab-hero {
     grid-template-columns: 1fr;
+  }
+
+  .lab-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compare-card {
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .compare-card:last-child {
+    border-bottom: 0;
   }
 
   .lab-grid {
