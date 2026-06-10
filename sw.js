@@ -1,4 +1,4 @@
-const CACHE_NAME = "ward19-draft-v64";
+const CACHE_NAME = "ward19-draft-v65";
 const APP_SHELL = [
   "./",
   "./index.html",

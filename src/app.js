@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v64";
+const APP_CACHE_VERSION = "ward19-draft-v65";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -19,7 +19,7 @@ const STRATEGY_MODES = [
   { id: "wr-heavy", label: "WR Heavy", detail: "Lean into PPR depth" },
   { id: "hero-rb", label: "Hero RB", detail: "One early RB, then WR" },
   { id: "elite-onesie", label: "Elite QB/TE", detail: "Push top QB or TE" },
-  { id: "value-only", label: "Value Only", detail: "Respect ADP value" }
+  { id: "value-only", label: "Board Value", detail: "Follow value with roster guardrails" }
 ];
 const TEAM_PROFILE_OPTIONS = {
   qb: [
