@@ -360,17 +360,23 @@ function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode)
   const isReach = valueGap !== null && valueGap <= -8;
 
   if (strategyMode === "balanced") {
+    let adjustment = 0;
     if (["QB", "TE"].includes(player.position) && roster[player.position].length === 0) {
       if (player.position === "QB") {
-        if (round <= 4 && (valueGap === null || valueGap < 20)) return Number(player.positionalRank) <= ELITE_ONESIE_RANK ? -42 : -54;
-        if (round === 5 && !isMajorValue) return Number(player.positionalRank) <= ELITE_ONESIE_RANK ? -24 : -34;
+        if (round <= 4 && (valueGap === null || valueGap < 20)) adjustment -= Number(player.positionalRank) <= ELITE_ONESIE_RANK ? 42 : 54;
+        if (round === 5 && !isMajorValue) adjustment -= Number(player.positionalRank) <= ELITE_ONESIE_RANK ? 24 : 34;
       }
       if (player.position === "TE") {
-        if (round <= 4 && !isMajorValue) return Number(player.positionalRank) <= ELITE_ONESIE_RANK ? -24 : -34;
-        if (round === 5 && !isValue) return Number(player.positionalRank) <= ELITE_ONESIE_RANK ? -12 : -20;
+        if (round <= 4 && !isMajorValue) adjustment -= Number(player.positionalRank) <= ELITE_ONESIE_RANK ? 24 : 34;
+        if (round === 5 && !isValue) adjustment -= Number(player.positionalRank) <= ELITE_ONESIE_RANK ? 12 : 20;
+        if (round <= 6 && wrCount < 4 && !isMajorValue) adjustment -= 12;
       }
     }
-    return 0;
+    if (player.position === "WR" && wrCount < 4 && round >= 5) adjustment += 12;
+    if (player.position === "WR" && wrCount < 5 && round >= 7) adjustment += round >= 10 ? 26 : 16;
+    if (player.position === "RB" && rbCount >= 5 && wrCount < 5 && round >= 6 && !isMajorValue) adjustment -= 18;
+    if (player.position === "RB" && rbCount >= 6 && wrCount < 5 && round >= 6) adjustment -= 34;
+    return adjustment;
   }
 
   if (strategyMode === "wr-heavy") {
