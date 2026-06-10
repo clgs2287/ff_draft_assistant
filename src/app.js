@@ -5,7 +5,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v62";
+const APP_CACHE_VERSION = "ward19-draft-v63";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -1269,6 +1269,7 @@ function summarizeDraftLabRuns(runs, strategyMode = state.strategyMode) {
   const firstFive = countBy(runs, (run) => run.myPicks.slice(0, 5).map((pick) => pick.player.name).join(" / "));
   const landedPlayers = countBy(runs.flatMap((run) => run.myPicks.filter((pick) => pick.player.position !== "DEF").map((pick) => pick.player.name)), (name) => name);
   const landedDefenses = countBy(runs.flatMap((run) => run.myPicks.filter((pick) => pick.player.position === "DEF").map((pick) => pick.player.name)), (name) => name);
+  const playerExposures = getDraftLabPlayerExposures(runs);
   const thinFlags = {
     rbThin: runs.filter((run) => run.counts.RB < 4).length,
     wrThin: runs.filter((run) => run.counts.WR < 5).length,
@@ -1287,11 +1288,51 @@ function summarizeDraftLabRuns(runs, strategyMode = state.strategyMode) {
     topRosterShapes: topCounts(rosterShapes, 4),
     topFirstFive: topCounts(firstFive, 4),
     topPlayers: topCounts(landedPlayers, 10),
+    playerExposures,
     topDefenses: topCounts(landedDefenses, 4),
     qbTiming: getDraftLabQbTiming(runs),
     teTiming: getDraftLabTeTiming(runs),
     thinFlags
   };
+}
+
+function getDraftLabPlayerExposures(runs) {
+  const exposures = new Map();
+
+  runs.forEach((run) => {
+    run.myPicks
+      .filter((pick) => pick.player.position !== "DEF")
+      .forEach((pick) => {
+        const entry = exposures.get(pick.player.id) ?? {
+          id: pick.player.id,
+          name: pick.player.name,
+          position: pick.player.position,
+          team: pick.player.team,
+          rank: pick.player.rank,
+          adp: pick.player.adp,
+          tier: pick.player.tier,
+          count: 0,
+          totalRound: 0,
+          totalPick: 0,
+          rounds: {}
+        };
+        entry.count += 1;
+        entry.totalRound += pick.round;
+        entry.totalPick += pick.overallPick;
+        entry.rounds[`Round ${pick.round}`] = (entry.rounds[`Round ${pick.round}`] ?? 0) + 1;
+        exposures.set(pick.player.id, entry);
+      });
+  });
+
+  return [...exposures.values()]
+    .map((entry) => ({
+      ...entry,
+      avgRound: entry.count ? entry.totalRound / entry.count : 0,
+      avgPick: entry.count ? entry.totalPick / entry.count : 0,
+      topRounds: topCounts(entry.rounds, 3)
+    }))
+    .sort((a, b) => b.count - a.count || a.avgPick - b.avgPick)
+    .slice(0, 8);
 }
 
 function getDraftLabQbTiming(runs) {
@@ -1976,6 +2017,7 @@ function renderStrategyCompareCard(result, isWinner) {
   const flags = result.thinFlags;
   const topBuild = result.topRosterShapes[0];
   const topPlayer = result.topPlayers[0];
+  const topExposure = result.playerExposures?.[0];
   const aCount = result.gradeCounts.A ?? 0;
   const bCount = result.gradeCounts.B ?? 0;
   const cCount = result.gradeCounts.C ?? 0;
@@ -1989,7 +2031,7 @@ function renderStrategyCompareCard(result, isWinner) {
       <p>${topBuild ? `${topBuild.label} - ${topBuild.count}x` : "No build data"}</p>
       <p>Thin: RB ${flags.rbThin}, WR ${flags.wrThin}, QB ${flags.noQb}, TE ${flags.noTe}, DEF ${flags.noDef}</p>
       <p>Elite QB ${result.qbTiming?.eliteQbCount ?? 0}/${result.mockCount} - Elite TE ${result.teTiming?.eliteTeCount ?? 0}/${result.mockCount}</p>
-      <p>${topPlayer ? `Top repeat: ${topPlayer.label} ${topPlayer.count}x` : "No repeat data"}</p>
+      <p>${topExposure ? `Top exposure: ${formatPlayerExposureSummary(topExposure, result.mockCount)}` : topPlayer ? `Top repeat: ${topPlayer.label} ${topPlayer.count}x` : "No repeat data"}</p>
     </article>
   `;
 }
@@ -2006,12 +2048,32 @@ function renderDraftLabResult(result) {
       ${renderLabBlock("Common Builds", result.topRosterShapes.map((item) => `${item.label} - ${item.count}x`))}
       ${renderLabBlock("Common Starts", result.topFirstFive.map((item) => `${item.count}x - ${item.label}`))}
       ${renderLabBlock("Frequent Skill Players", result.topPlayers.slice(0, 6).map((item) => `${item.label} - ${item.count}x`))}
+      ${renderLabBlock("Top Exposure Detail", getDraftLabExposureItems(result))}
       ${renderLabBlock("DEF Timing", getDraftLabDefenseItems(result))}
       ${renderLabBlock("QB Timing", getDraftLabQbTimingItems(result))}
       ${renderLabBlock("TE Timing", getDraftLabTeTimingItems(result))}
       ${renderLabBlock("Thin Spots", getDraftLabThinSpotItems(result))}
     </div>
   `;
+}
+
+function getDraftLabExposureItems(result) {
+  const exposure = result.playerExposures?.[0];
+  if (!exposure) return [];
+
+  const rank = Number.isFinite(Number(exposure.rank)) ? `Rank ${Math.round(Number(exposure.rank))}` : "No rank";
+  const adp = Number.isFinite(Number(exposure.adp)) ? `ADP ${formatOneDecimal(Number(exposure.adp))}` : "No ADP";
+  const rounds = exposure.topRounds?.length ? exposure.topRounds.map((item) => `${item.label} ${item.count}x`).join(", ") : "No round data";
+  return [
+    formatPlayerExposureSummary(exposure, result.mockCount),
+    `${rank}, ${adp}, Tier ${exposure.tier ?? "--"}`,
+    `Avg pick ${formatOneDecimal(exposure.avgPick)}, avg round ${formatOneDecimal(exposure.avgRound)}`,
+    `Mostly: ${rounds}`
+  ];
+}
+
+function formatPlayerExposureSummary(exposure, mockCount) {
+  return `${exposure.name} (${exposure.position} ${exposure.team}) ${exposure.count}/${mockCount}`;
 }
 
 function renderLabBlock(title, items) {
