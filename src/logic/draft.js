@@ -1,7 +1,5 @@
 import { leagueSettings } from "../data/leagueSettings.js";
 
-export const TOTAL_ROUNDS = leagueSettings.draftRounds;
-
 export function getPickInfo(overallPick, teamCount = leagueSettings.teams) {
   const round = Math.ceil(overallPick / teamCount);
   const pickInRound = ((overallPick - 1) % teamCount) + 1;
@@ -10,7 +8,7 @@ export function getPickInfo(overallPick, teamCount = leagueSettings.teams) {
 }
 
 export function getTotalPicks(teamCount = leagueSettings.teams) {
-  return teamCount * TOTAL_ROUNDS;
+  return teamCount * leagueSettings.draftRounds;
 }
 
 export function getMyUpcomingPicks(currentPick, mySlot, teamCount = leagueSettings.teams) {

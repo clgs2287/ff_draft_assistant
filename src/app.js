@@ -1,16 +1,16 @@
-import { leagueSettings, teamNames as defaultTeamNames } from "./data/leagueSettings.js";
+import { getLeagueProfileOptions, leagueSettings, setLeagueSettingsProfile, teamNames as defaultTeamNames } from "./data/leagueSettings.js";
 import { fantasyProsPlayers } from "./data/fantasyProsPlayers.js";
-import { buildRoster, getMyUpcomingPicks, getPickInfo, getRosterCount, getRosterNeeds, getTotalPicks, TOTAL_ROUNDS } from "./logic/draft.js";
+import { buildRoster, getMyUpcomingPicks, getPickInfo, getRosterCount, getRosterNeeds, getTotalPicks } from "./logic/draft.js";
 import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/recommendations.js";
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
-const APP_CACHE_VERSION = "ward19-draft-v67";
+const DRAFT_SAVES_KEY = "ward19-draft-assistant-saved-drafts-v1";
+const APP_CACHE_VERSION = "ward19-draft-v68";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
 const BOARD_LIMIT = 220;
-const TEAM_ROSTER_TEMPLATE = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST", "BN", "BN", "BN", "BN", "BN", "BN"];
 const TEAM_CODES = [
   "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAC", "JAX", "KC", "LV", "LAC", "LAR", "MIA", "MIN", "NE", "NO", "NYG", "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS"
 ];
@@ -61,9 +61,11 @@ function defaultState() {
     search: "",
     editPickIndex: null,
     editSearch: "",
+    leagueProfileId: "ward19",
     teamNames: defaultTeamNames,
     teamProfiles: Array.from({ length: leagueSettings.teams }, () => ({ ...DEFAULT_TEAM_PROFILE })),
     teamSort: "roster",
+    savedDrafts: loadSavedDrafts(),
     draftLabResult: null,
     draftLabCompareResult: null,
     liveFilter: "ALL",
@@ -83,18 +85,36 @@ function loadState() {
 }
 
 function normalizeState(nextState) {
+  const leagueProfileId = getLeagueProfileOptions().some((profile) => profile.id === nextState.leagueProfileId) ? nextState.leagueProfileId : "ward19";
+  setLeagueSettingsProfile(leagueProfileId);
   const savedTeamNames = Array.isArray(nextState.teamNames) ? nextState.teamNames : [];
   const savedTeamProfiles = Array.isArray(nextState.teamProfiles) ? nextState.teamProfiles : [];
+  const savedDrafts = Array.isArray(nextState.savedDrafts) ? nextState.savedDrafts : loadSavedDrafts();
   const strategyMode = STRATEGY_MODES.some((mode) => mode.id === nextState.strategyMode) ? nextState.strategyMode : "balanced";
   return {
     ...nextState,
+    leagueProfileId,
     strategyMode,
+    savedDrafts,
     teamNames: Array.from({ length: leagueSettings.teams }, (_, index) => {
       const name = String(savedTeamNames[index] ?? "").trim();
-      return name || defaultTeamNames[index];
+      return name || `Team ${index + 1}`;
     }),
     teamProfiles: Array.from({ length: leagueSettings.teams }, (_, index) => normalizeTeamProfile(savedTeamProfiles[index]))
   };
+}
+
+function loadSavedDrafts() {
+  try {
+    const saves = JSON.parse(localStorage.getItem(DRAFT_SAVES_KEY) || "[]");
+    return Array.isArray(saves) ? saves : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDraftSaves(saves) {
+  localStorage.setItem(DRAFT_SAVES_KEY, JSON.stringify(saves));
 }
 
 function normalizeTeamProfile(profile = {}) {
@@ -337,6 +357,61 @@ function backupCurrentDraft() {
   };
 
   downloadJson(payload, `ward19-current-draft-backup-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+function saveCurrentDraftSlot() {
+  const defaultName = `${leagueSettings.name} Draft ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  const name = prompt("Save draft name?", defaultName);
+  if (!name) return;
+  const cleanName = name.trim();
+  if (!cleanName) return;
+
+  const savedDraft = {
+    id: `draft-${Date.now()}`,
+    name: cleanName,
+    savedAt: new Date().toISOString(),
+    leagueProfileId: state.leagueProfileId,
+    mySlot: state.mySlot,
+    picks: state.picks,
+    teamNames: state.teamNames,
+    teamProfiles: state.teamProfiles,
+    teamSort: state.teamSort,
+    strategyMode: state.strategyMode
+  };
+  const saves = [savedDraft, ...state.savedDrafts.filter((draft) => draft.name !== savedDraft.name)].slice(0, 12);
+  saveDraftSaves(saves);
+  setState({ savedDrafts: saves });
+}
+
+function loadSavedDraftSlot(id) {
+  const savedDraft = state.savedDrafts.find((draft) => draft.id === id);
+  if (!savedDraft) return;
+  if (!confirm(`Load "${savedDraft.name}"? This replaces the current active draft.`)) return;
+
+  setState({
+    leagueProfileId: savedDraft.leagueProfileId ?? "ward19",
+    mySlot: savedDraft.mySlot ?? null,
+    picks: Array.isArray(savedDraft.picks) ? savedDraft.picks : [],
+    teamNames: Array.isArray(savedDraft.teamNames) ? savedDraft.teamNames : state.teamNames,
+    teamProfiles: Array.isArray(savedDraft.teamProfiles) ? savedDraft.teamProfiles : state.teamProfiles,
+    teamSort: savedDraft.teamSort ?? state.teamSort,
+    strategyMode: savedDraft.strategyMode ?? state.strategyMode,
+    search: "",
+    editPickIndex: null,
+    editSearch: "",
+    draftLabResult: null,
+    draftLabCompareResult: null,
+    activeView: "draft"
+  });
+}
+
+function deleteSavedDraftSlot(id) {
+  const savedDraft = state.savedDrafts.find((draft) => draft.id === id);
+  if (!savedDraft) return;
+  if (!confirm(`Delete saved draft "${savedDraft.name}"?`)) return;
+  const saves = state.savedDrafts.filter((draft) => draft.id !== id);
+  saveDraftSaves(saves);
+  setState({ savedDrafts: saves });
 }
 
 function restoreDraftBackup(file) {
@@ -1149,7 +1224,7 @@ function toSourceId(name) {
 
 function resetDraft() {
   if (!confirm("Reset all draft picks?")) return;
-  setState({ ...defaultState(), mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamProfiles: state.teamProfiles, teamSort: state.teamSort });
+  setState({ ...defaultState(), leagueProfileId: state.leagueProfileId, mySlot: state.mySlot, strategyMode: state.strategyMode, teamNames: state.teamNames, teamProfiles: state.teamProfiles, teamSort: state.teamSort, savedDrafts: state.savedDrafts });
 }
 
 function runDraftLab(mockCount = 100) {
@@ -1501,7 +1576,14 @@ function renderSetup() {
           }).join("")}
         </div>
       </div>
-      <div class="league-chip">${leagueSettings.teams} teams - ${TOTAL_ROUNDS} rounds - No K - ${getPlayerDataLabel()}</div>
+      <div class="league-chip">${leagueSettings.teams} teams - ${leagueSettings.draftRounds} rounds - ${leagueSettings.rosterSlots.DEF ? "DEF" : "No DEF"} - ${getPlayerDataLabel()}</div>
+      <label class="league-select">
+        <span class="label">League Format</span>
+        <select data-league-profile>
+          ${getLeagueProfileOptions().map((profile) => `<option value="${profile.id}" ${state.leagueProfileId === profile.id ? "selected" : ""}>${profile.name}</option>`).join("")}
+        </select>
+        <em>${leagueSettings.scoring}. ${leagueSettings.draftRounds} rounds.</em>
+      </label>
       <div class="strategy-control">
         <div>
           <span class="label">Draft Strategy</span>
@@ -1514,6 +1596,23 @@ function renderSetup() {
       </div>
     </section>
   `;
+}
+
+function updateLeagueProfile(profileId) {
+  if (profileId === state.leagueProfileId) return;
+  const pickCount = state.picks.length;
+  const message = pickCount
+    ? `Switch league format? This keeps your ${pickCount} pick${pickCount === 1 ? "" : "s"}, but roster needs and draft length will be recalculated.`
+    : "Switch league format?";
+  if (!confirm(message)) {
+    render();
+    return;
+  }
+  setState({
+    leagueProfileId: profileId,
+    draftLabResult: null,
+    draftLabCompareResult: null
+  });
 }
 
 function getActiveStrategyMode() {
@@ -2179,9 +2278,11 @@ function renderTeamsView() {
       </div>
       <div class="export-panel">
         <div class="backup-actions">
+          <button class="primary-lite" data-action="save-draft-slot">Save Active Draft</button>
           <button class="primary-lite" data-action="backup-draft">Backup Current Draft</button>
           <button class="secondary" data-action="choose-restore">Restore Backup</button>
         </div>
+        ${renderSavedDraftSlots()}
         <button class="primary-lite" data-action="export-draft" ${state.picks.length ? "" : "disabled"}>Export Draft History</button>
         <input class="file-input" type="file" accept="application/json,.json" data-input="restore-backup" />
         <span>${state.picks.length ? `${state.picks.length}/${getTotalPicks()} picks ready` : "Enter picks before exporting"}</span>
@@ -2210,6 +2311,34 @@ function renderTeamsView() {
       }).join("")}
     </section>
   `;
+}
+
+function renderSavedDraftSlots() {
+  return `
+    <div class="saved-drafts">
+      <div class="saved-drafts-head">
+        <strong>Saved Drafts</strong>
+        <span>${state.savedDrafts.length ? `${state.savedDrafts.length} saved` : "None yet"}</span>
+      </div>
+      ${state.savedDrafts.length ? state.savedDrafts.map((draft) => `
+        <article class="saved-draft-row">
+          <div>
+            <strong>${escapeHtml(draft.name ?? "Saved Draft")}</strong>
+            <span>${getLeagueProfileOptions().find((profile) => profile.id === draft.leagueProfileId)?.name ?? "Ward19"} - ${draft.picks?.length ?? 0}/${getSavedDraftTotalPicks(draft)} picks - ${formatLabTimestamp(draft.savedAt)}</span>
+          </div>
+          <button class="secondary" data-load-saved-draft="${draft.id}">Load</button>
+          <button class="danger" data-delete-saved-draft="${draft.id}">Delete</button>
+        </article>
+      `).join("") : "<p class='empty'>Save active drafts here while you jump between best ball rooms.</p>"}
+    </div>
+  `;
+}
+
+function getSavedDraftTotalPicks(draft) {
+  const profile = getLeagueProfileOptions().find((option) => option.id === draft.leagueProfileId);
+  const rounds = profile?.draftRounds ?? leagueSettings.draftRounds;
+  const teams = profile?.teams ?? leagueSettings.teams;
+  return teams * rounds;
 }
 
 function renderTeamProfileControls(teamSlot) {
@@ -2407,7 +2536,7 @@ function renderTeamRosterRow(row) {
 }
 
 function getTeamRosterRows(picks) {
-  const rows = TEAM_ROSTER_TEMPLATE.map((slot) => ({ slot, pick: null }));
+  const rows = getTeamRosterTemplate().map((slot) => ({ slot, pick: null }));
 
   for (const pick of picks) {
     const slotIndex = getTeamRosterSlotIndex(rows, pick.player.position);
@@ -2415,6 +2544,17 @@ function getTeamRosterRows(picks) {
   }
 
   return rows;
+}
+
+function getTeamRosterTemplate() {
+  const slots = [];
+  ["QB", "RB", "WR", "TE"].forEach((slot) => {
+    Array.from({ length: leagueSettings.rosterSlots[slot] ?? 0 }).forEach(() => slots.push(slot));
+  });
+  Array.from({ length: leagueSettings.rosterSlots.FLEX ?? 0 }).forEach(() => slots.push("FLEX"));
+  Array.from({ length: leagueSettings.rosterSlots.DEF ?? 0 }).forEach(() => slots.push("DST"));
+  Array.from({ length: leagueSettings.rosterSlots.BENCH ?? 0 }).forEach(() => slots.push("BN"));
+  return slots;
 }
 
 function getTeamDraftRows(picks, rosterRows) {
@@ -3238,6 +3378,8 @@ function bindEvents() {
     button.addEventListener("click", () => setState({ strategyMode: button.dataset.strategy }));
   });
 
+  app.querySelector("[data-league-profile]")?.addEventListener("change", (event) => updateLeagueProfile(event.target.value));
+
   app.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => setState({ activeView: button.dataset.view }));
   });
@@ -3289,6 +3431,7 @@ function bindEvents() {
   app.querySelector("[data-action='reset']")?.addEventListener("click", resetDraft);
   app.querySelector("[data-action='cancel-edit']")?.addEventListener("click", cancelEditPick);
   app.querySelector("[data-action='export-draft']")?.addEventListener("click", exportDraftHistory);
+  app.querySelector("[data-action='save-draft-slot']")?.addEventListener("click", saveCurrentDraftSlot);
   app.querySelector("[data-action='backup-draft']")?.addEventListener("click", backupCurrentDraft);
   app.querySelector("[data-action='choose-restore']")?.addEventListener("click", () => app.querySelector("[data-input='restore-backup']")?.click());
   app.querySelector("[data-input='restore-backup']")?.addEventListener("change", (event) => {
@@ -3317,6 +3460,12 @@ function bindEvents() {
   });
   app.querySelectorAll("[data-source-weight]").forEach((input) => {
     input.addEventListener("change", (event) => updateRankingSourceWeight(event.target.dataset.sourceWeight, event.target.value));
+  });
+  app.querySelectorAll("[data-load-saved-draft]").forEach((button) => {
+    button.addEventListener("click", () => loadSavedDraftSlot(button.dataset.loadSavedDraft));
+  });
+  app.querySelectorAll("[data-delete-saved-draft]").forEach((button) => {
+    button.addEventListener("click", () => deleteSavedDraftSlot(button.dataset.deleteSavedDraft));
   });
   app.querySelectorAll("[data-remove-source]").forEach((button) => {
     button.addEventListener("click", () => removeRankingSource(button.dataset.removeSource));

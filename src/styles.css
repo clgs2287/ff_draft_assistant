@@ -216,6 +216,29 @@ h2 {
   font-weight: 800;
 }
 
+.league-select {
+  display: grid;
+  gap: 6px;
+}
+
+.league-select select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #071321;
+  color: var(--ink);
+  font-weight: 850;
+  padding: 0 10px;
+}
+
+.league-select em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
 .tabs {
   position: sticky;
   top: 0;
@@ -1300,8 +1323,41 @@ h2 {
 
 .backup-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.saved-drafts {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(159, 181, 208, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.saved-drafts-head,
+.saved-draft-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.saved-drafts-head strong,
+.saved-draft-row strong {
+  color: #ffffff;
+  font-size: 0.86rem;
+}
+
+.saved-draft-row span {
+  display: block;
+  margin-top: 3px;
+  text-align: left;
+}
+
+.saved-draft-row button {
+  min-width: 74px;
 }
 
 .file-input {
@@ -1708,6 +1764,15 @@ h2 {
 
   .backup-actions {
     grid-template-columns: 1fr;
+  }
+
+  .saved-drafts-head,
+  .saved-draft-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .saved-draft-row > div {
+    grid-column: 1 / -1;
   }
 
   .data-actions {
