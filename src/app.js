@@ -7,7 +7,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
 const DRAFT_SAVES_KEY = "ward19-draft-assistant-saved-drafts-v1";
-const APP_CACHE_VERSION = "ward19-draft-v70";
+const APP_CACHE_VERSION = "ward19-draft-v71";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -2186,6 +2186,9 @@ function renderRecapView(ctx) {
         ${renderRecapBlock("Reaches", recap.reaches)}
         ${renderRecapBlock("Bye Watch", recap.byes)}
         ${renderRecapBlock("Fix Next", recap.nextSteps)}
+        ${recap.bestBall ? renderRecapBlock("Best-Ball Build", recap.bestBall.construction) : ""}
+        ${recap.bestBall ? renderRecapBlock("Stacks", recap.bestBall.stacks) : ""}
+        ${recap.bestBall ? renderRecapBlock("Spike-Week Bets", recap.bestBall.ceiling) : ""}
       </div>
     </section>
   `;
@@ -2447,6 +2450,7 @@ function renderTeamsView() {
           <button class="secondary" data-action="choose-restore">Restore Backup</button>
         </div>
         ${renderSavedDraftSlots()}
+        ${renderBestBallExposurePanel()}
         <button class="primary-lite" data-action="export-draft" ${state.picks.length ? "" : "disabled"}>Export Draft History</button>
         <input class="file-input" type="file" accept="application/json,.json" data-input="restore-backup" />
         <span>${state.picks.length ? `${state.picks.length}/${getTotalPicks()} picks ready` : "Enter picks before exporting"}</span>
@@ -2498,11 +2502,80 @@ function renderSavedDraftSlots() {
   `;
 }
 
+function renderBestBallExposurePanel() {
+  const exposure = getBestBallExposureSummary();
+  if (!exposure.draftCount) return "";
+
+  return `
+    <div class="saved-drafts exposure-panel">
+      <div class="saved-drafts-head">
+        <strong>Best-Ball Exposure</strong>
+        <span>${exposure.draftCount} draft${exposure.draftCount === 1 ? "" : "s"}</span>
+      </div>
+      ${exposure.items.length ? exposure.items.map((item) => `
+        <article class="saved-draft-row exposure-row">
+          <div>
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${item.position} - ${item.team} - ${item.count}/${exposure.draftCount} drafts${item.warning ? ` - ${item.warning}` : ""}</span>
+          </div>
+        </article>
+      `).join("") : "<p class='empty'>No repeated players across saved best-ball drafts yet.</p>"}
+    </div>
+  `;
+}
+
+function getBestBallExposureSummary() {
+  const drafts = [
+    ...state.savedDrafts.filter((draft) => isBestBallProfile(draft.leagueProfileId)),
+    ...(isBestBallProfile() && state.picks.length ? [{
+      id: "active-draft",
+      name: "Active Draft",
+      leagueProfileId: state.leagueProfileId,
+      mySlot: state.mySlot,
+      picks: state.picks
+    }] : [])
+  ];
+  const exposure = new Map();
+
+  drafts.forEach((draft) => {
+    const seen = new Set();
+    getDraftRosterPicks(draft).forEach((pick) => {
+      const player = pick.player;
+      const key = player.id ?? `${player.name}-${player.position}-${player.team}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const current = exposure.get(key) ?? { name: player.name, position: player.position, team: player.team, count: 0 };
+      current.count += 1;
+      exposure.set(key, current);
+    });
+  });
+
+  const items = Array.from(exposure.values())
+    .filter((item) => item.count >= 2)
+    .map((item) => ({
+      ...item,
+      warning: item.count === drafts.length && drafts.length >= 3 ? "very concentrated" : item.count / drafts.length >= 0.67 && drafts.length >= 3 ? "high exposure" : ""
+    }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, 8);
+
+  return { draftCount: drafts.length, items };
+}
+
+function getDraftRosterPicks(draft) {
+  const picks = Array.isArray(draft.picks) ? draft.picks : [];
+  return draft.mySlot ? picks.filter((pick) => pick.teamSlot === draft.mySlot) : picks;
+}
+
 function getSavedDraftTotalPicks(draft) {
   const profile = getLeagueProfileOptions().find((option) => option.id === draft.leagueProfileId);
   const rounds = profile?.draftRounds ?? leagueSettings.draftRounds;
   const teams = profile?.teams ?? leagueSettings.teams;
   return teams * rounds;
+}
+
+function isBestBallProfile(profileId = state.leagueProfileId) {
+  return profileId === "draftkingsBestBall";
 }
 
 function renderTeamProfileControls(teamSlot) {
@@ -2891,8 +2964,75 @@ function getDraftRecap(myPicks, roster) {
     values,
     reaches,
     byes,
-    nextSteps
+    nextSteps,
+    bestBall: isBestBallProfile() ? getBestBallAudit(myPicks, roster, positionCounts) : null
   };
+}
+
+function getBestBallAudit(myPicks, roster, counts) {
+  return {
+    construction: getBestBallConstructionItems(counts, myPicks.length),
+    stacks: getBestBallStackItems(myPicks),
+    ceiling: getBestBallCeilingItems(myPicks)
+  };
+}
+
+function getBestBallConstructionItems(counts, pickCount) {
+  const items = [
+    `Current: QB ${counts.QB}, RB ${counts.RB}, WR ${counts.WR}, TE ${counts.TE}`,
+    "Target lanes: QB 2-3, RB 5-7, WR 7-9, TE 2-3"
+  ];
+  const late = pickCount >= 14;
+
+  if (counts.QB < 2 && late) items.push("Need another QB for best-ball injury/bye coverage.");
+  if (counts.TE < 2 && late) items.push("Need another TE unless an elite TE anchors the build.");
+  if (counts.WR < 7 && pickCount >= 12) items.push("WR spike-week volume is light for a 3-WR best-ball build.");
+  if (counts.RB < 5 && pickCount >= 14) items.push("RB depth is thin for a no-waiver format.");
+  if (counts.QB > 3) items.push("Too many QBs. Those picks usually belong at RB/WR/TE.");
+  if (counts.TE > 3) items.push("Too many TEs unless this is a very specific bet.");
+
+  return items.slice(0, 5);
+}
+
+function getBestBallStackItems(myPicks) {
+  const players = myPicks.map((pick) => pick.player);
+  const teams = players.reduce((map, player) => {
+    if (!player.team) return map;
+    const list = map.get(player.team) ?? [];
+    list.push(player);
+    map.set(player.team, list);
+    return map;
+  }, new Map());
+  const stacks = [];
+
+  teams.forEach((teamPlayers, team) => {
+    const qbs = teamPlayers.filter((player) => player.position === "QB");
+    const passCatchers = teamPlayers.filter((player) => ["WR", "TE"].includes(player.position));
+    if (qbs.length && passCatchers.length) {
+      stacks.push(`${team}: ${qbs.map((player) => player.name).join("/")} with ${passCatchers.map((player) => player.name).join(", ")}`);
+    } else if (teamPlayers.length >= 2 && passCatchers.length >= 2) {
+      stacks.push(`${team}: skill stack ${teamPlayers.map((player) => player.name).join(", ")}`);
+    }
+  });
+
+  if (!stacks.length) return myPicks.length >= 10 ? ["No clear stack yet. Try to add QB/pass-catcher correlation without reaching."] : ["No stack yet. That is fine early if value is driving picks."];
+  return stacks.slice(0, 4);
+}
+
+function getBestBallCeilingItems(myPicks) {
+  const spikePlayers = myPicks
+    .map((pick) => {
+      const ceiling = Number(pick.player.draftSharksCeiling);
+      const projection = Number(pick.player.draftSharksProjection ?? pick.player.draftSharksConsensusProjection);
+      const gap = Number.isFinite(ceiling) && Number.isFinite(projection) ? ceiling - projection : null;
+      return { player: pick.player, gap };
+    })
+    .filter((item) => item.gap !== null && item.gap > 0)
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 4);
+
+  if (!spikePlayers.length) return ["No ceiling data found for these picks yet."];
+  return spikePlayers.map(({ player, gap }) => `${player.name}: +${Math.round(gap)} ceiling over projection`);
 }
 
 function getPositionCounts(picks) {

@@ -64,6 +64,8 @@ function limitDefenseRecommendations(players, needs, currentPick) {
 }
 
 function limitBackupOnesies(players, roster, needs, currentPick) {
+  if (isBestBallDraft()) return limitBestBallOnesies(players, roster);
+
   let backupQbs = 0;
   let backupTes = 0;
 
@@ -77,6 +79,27 @@ function limitBackupOnesies(players, roster, needs, currentPick) {
       if (roster.TE.length >= 2) return false;
       backupTes += 1;
       return backupTes <= 1;
+    }
+
+    return true;
+  });
+}
+
+function limitBestBallOnesies(players, roster) {
+  let qbs = roster.QB.length;
+  let tes = roster.TE.length;
+
+  return players.filter((player) => {
+    if (player.position === "QB") {
+      if (qbs >= 3) return false;
+      qbs += 1;
+      return true;
+    }
+
+    if (player.position === "TE") {
+      if (tes >= 3) return false;
+      tes += 1;
+      return true;
     }
 
     return true;
@@ -104,6 +127,8 @@ function getScoreBreakdown(player, roster, needs, currentPick, available, nextPi
   const rosterUrgency = getRosterUrgencyBonus(player, roster, needs, currentPick);
   const onesieValueBonus = getBackupOnesieValueBonus(player, roster, currentPick);
   const stackBonus = getStackBonus(player, roster, currentPick);
+  const bestBallCeiling = getBestBallCeilingBonus(player);
+  const bestBallConstruction = getBestBallRosterConstructionBonus(player, roster, currentPick);
   const returnRisk = getReturnRiskBonus(player, currentPick, nextPick);
   const pathBonus = getNextPickPathBonus(player, roster, needs, available, nextPick);
   const defenseTimingPenalty = player.position === "DEF" && currentPick < leagueSettings.teams * (leagueSettings.rosterSlots.QB + leagueSettings.rosterSlots.RB + leagueSettings.rosterSlots.WR + leagueSettings.rosterSlots.TE + leagueSettings.rosterSlots.FLEX) ? 70 : 0;
@@ -121,6 +146,8 @@ function getScoreBreakdown(player, roster, needs, currentPick, available, nextPi
     { label: "Roster urgency", value: rosterUrgency },
     { label: "Backup value", value: onesieValueBonus },
     { label: "Stack", value: stackBonus },
+    { label: "Ceiling", value: bestBallCeiling },
+    { label: "Best-ball build", value: bestBallConstruction },
     { label: "May not return", value: returnRisk },
     { label: "Next-pick drop", value: pathBonus },
     { label: "Strategy", value: strategy },
@@ -140,6 +167,8 @@ function getVisibleBreakdown(breakdown) {
     "Roster urgency",
     "Backup value",
     "Stack",
+    "Ceiling",
+    "Best-ball build",
     "May not return",
     "Next-pick drop",
     "Strategy",
@@ -203,6 +232,8 @@ function getStarterNeed(player, needs) {
 
 function getOverfillPenalty(player, roster) {
   if (player.position === "DEF" && roster.DEF.length) return 90;
+  if (isBestBallDraft() && player.position === "QB") return roster.QB.length >= 3 ? 120 : 0;
+  if (isBestBallDraft() && player.position === "TE") return roster.TE.length >= 3 ? 130 : 0;
   if (player.position === "QB" && roster.QB.length) return 40;
   if (player.position === "TE" && roster.TE.length && roster.FLEX.length) return 90;
   const positionCount = roster[player.position]?.length ?? 0;
@@ -215,6 +246,18 @@ function getDepthBalancePenalty(player, roster) {
   const rosterPlayers = getRosterPlayers(roster);
   const wrCount = rosterPlayers.filter((candidate) => candidate.position === "WR").length;
   const rbCount = rosterPlayers.filter((candidate) => candidate.position === "RB").length;
+
+  if (isBestBallDraft()) {
+    const qbCount = rosterPlayers.filter((candidate) => candidate.position === "QB").length;
+    const teCount = rosterPlayers.filter((candidate) => candidate.position === "TE").length;
+    if (player.position === "WR" && wrCount >= 9) return 32;
+    if (player.position === "WR" && wrCount >= 8 && rbCount <= 4) return 22;
+    if (player.position === "RB" && rbCount >= 7) return 28;
+    if (player.position === "RB" && rbCount >= 6 && wrCount <= 6) return 16;
+    if (player.position === "QB" && qbCount >= 2 && wrCount < 7) return 18;
+    if (player.position === "TE" && teCount >= 2 && wrCount < 7) return 14;
+    return 0;
+  }
 
   if (player.position === "WR") {
     if (wrCount >= 7) return 44;
@@ -233,6 +276,17 @@ function getDepthBalancePenalty(player, roster) {
 function getOnesieTimingPenalty(player, roster, needs, currentPick) {
   if (!["QB", "TE"].includes(player.position)) return 0;
   if (roster[player.position].length === 0) return 0;
+
+  if (isBestBallDraft()) {
+    const count = roster[player.position].length;
+    const round = getDraftRound(currentPick);
+    const valueGap = getAdpValueGap(player, currentPick);
+    const eliteStarter = Number(roster[player.position][0]?.positionalRank) <= ELITE_ONESIE_RANK;
+    if (count >= 3) return 300;
+    if (count >= 2 && round < 16 && (valueGap === null || valueGap < 18)) return 90;
+    if (count === 1 && eliteStarter && round < 12 && (valueGap === null || valueGap < 8)) return 55;
+    return 0;
+  }
 
   const drafted = getRosterCount(roster);
   const remainingRosterPicks = Math.max(leagueSettings.draftRounds - drafted, 0);
@@ -256,6 +310,14 @@ function getOnesieTimingPenalty(player, roster, needs, currentPick) {
 function getBackupOnesieValueBonus(player, roster, currentPick) {
   if (!["QB", "TE"].includes(player.position)) return 0;
   if (roster[player.position].length === 0) return 0;
+
+  if (isBestBallDraft()) {
+    const valueGap = getAdpValueGap(player, currentPick);
+    if (valueGap === null || valueGap < 4) return 0;
+    const count = roster[player.position].length;
+    if (count >= 3) return 0;
+    return Math.min(valueGap, player.position === "TE" ? 16 : 14) * (count === 1 ? 1.5 : 0.75);
+  }
 
   const starter = roster[player.position][0];
   const hasEliteStarter = Number(starter?.positionalRank) <= ELITE_ONESIE_RANK;
@@ -359,6 +421,15 @@ function getStrategyAdjustment(player, roster, needs, currentPick, strategyMode)
   const isMajorValue = valueGap !== null && valueGap >= 14;
   const isReach = valueGap !== null && valueGap <= -8;
 
+  if (isBestBallDraft()) {
+    let adjustment = 0;
+    if (player.position === "WR" && wrCount < 7 && round >= 7) adjustment += 10;
+    if (player.position === "RB" && rbCount < 5 && round >= 9) adjustment += 8;
+    if (isValue) adjustment += Math.min(valueGap, 18) * 0.55;
+    if (isReach && drafted < leagueSettings.draftRounds - 2) adjustment += Math.max(valueGap, -14) * 0.7;
+    return adjustment;
+  }
+
   if (strategyMode === "balanced") {
     let adjustment = 0;
     if (["QB", "TE"].includes(player.position) && roster[player.position].length === 0) {
@@ -420,6 +491,8 @@ function buildReason(player, roster, needs, currentPick, available, nextPick, st
   if (needs[player.position] > 0) reasons.push(`${player.position} starter need`);
   if (["RB", "WR", "TE"].includes(player.position) && needs.FLEX > 0 && needs[player.position] === 0) reasons.push("flex eligible");
   if (stackFit) reasons.push(`stack with ${stackFit.name}`);
+  if (isBestBallDraft() && getBestBallCeilingBonus(player) >= 8) reasons.push("best-ball ceiling");
+  if (isBestBallDraft() && getBestBallRosterConstructionBonus(player, roster, currentPick) >= 12) reasons.push("best-ball build need");
   if (player.position === "WR") reasons.push("full PPR/3 WR format");
   if (getReturnRiskBonus(player, currentPick, nextPick) >= 8) reasons.push("unlikely to return");
   if (getNextPickPathBonus(player, roster, needs, available, nextPick) >= 12) reasons.push("next-pick tier drop");
@@ -470,10 +543,58 @@ function getStackBonus(player, roster, currentPick) {
   const reachMultiplier = valueGap === null || valueGap >= STACK_SOFT_REACH_LIMIT ? 1 : 0.45;
   const anchorBonus = stackFit.rank <= 60 || player.rank <= 60 ? 8 : 0;
   const positionBonus = player.position === "QB" ? 24 : 18;
+  const bestBallMultiplier = isBestBallDraft() ? 1.25 : 1;
 
-  return (positionBonus + anchorBonus) * reachMultiplier;
+  return (positionBonus + anchorBonus) * reachMultiplier * bestBallMultiplier;
 }
 
 function getRosterPlayers(roster) {
   return Object.values(roster).flat();
+}
+
+function getBestBallCeilingBonus(player) {
+  if (!isBestBallDraft()) return 0;
+  if (!["RB", "WR", "TE", "QB"].includes(player.position)) return 0;
+
+  const ceiling = Number(player.draftSharksCeiling);
+  const projection = Number(player.draftSharksProjection ?? player.draftSharksConsensusProjection);
+  if (!Number.isFinite(ceiling) || !Number.isFinite(projection) || projection <= 0) return 0;
+
+  const ceilingGap = ceiling - projection;
+  const ratio = ceilingGap / projection;
+  const positionMultiplier = player.position === "WR" ? 1.18 : player.position === "TE" ? 1.05 : 1;
+  return Math.min(Math.max(ratio * 70 * positionMultiplier, 0), 16);
+}
+
+function getBestBallRosterConstructionBonus(player, roster, currentPick) {
+  if (!isBestBallDraft()) return 0;
+
+  const rosterPlayers = getRosterPlayers(roster);
+  const round = getDraftRound(currentPick);
+  const counts = {
+    QB: rosterPlayers.filter((candidate) => candidate.position === "QB").length,
+    RB: rosterPlayers.filter((candidate) => candidate.position === "RB").length,
+    WR: rosterPlayers.filter((candidate) => candidate.position === "WR").length,
+    TE: rosterPlayers.filter((candidate) => candidate.position === "TE").length
+  };
+  const position = player.position;
+  const minTargets = { QB: 2, RB: 5, WR: 7, TE: 2 };
+  const maxTargets = { QB: 3, RB: 7, WR: 9, TE: 3 };
+  if (!(position in minTargets)) return 0;
+
+  if (counts[position] >= maxTargets[position]) return -42;
+  if (counts[position] < minTargets[position]) {
+    const urgencyRound = position === "WR" ? 8 : position === "RB" ? 10 : 13;
+    if (round >= urgencyRound) return 22;
+    if (round >= urgencyRound - 2) return 10;
+  }
+  if (position === "WR" && counts.WR < 8 && round >= 11) return 12;
+  if (position === "QB" && counts.QB === 1 && round >= 12) return 14;
+  if (position === "TE" && counts.TE === 1 && round >= 13) return 12;
+
+  return 0;
+}
+
+function isBestBallDraft() {
+  return leagueSettings.id === "draftkingsBestBall";
 }
