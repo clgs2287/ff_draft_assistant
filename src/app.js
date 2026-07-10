@@ -7,7 +7,7 @@ import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/reco
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
 const DRAFT_SAVES_KEY = "ward19-draft-assistant-saved-drafts-v1";
-const APP_CACHE_VERSION = "ward19-draft-v69";
+const APP_CACHE_VERSION = "ward19-draft-v70";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -394,6 +394,24 @@ function backupCurrentDraft() {
   downloadJson(payload, `ward19-current-draft-backup-${new Date().toISOString().slice(0, 10)}.json`);
 }
 
+function exportSavedDrafts() {
+  if (!state.savedDrafts.length) return;
+
+  const payload = {
+    schemaVersion: 1,
+    backupType: "ward19-saved-drafts",
+    exportedAt: new Date().toISOString(),
+    app: {
+      name: "Ward19 Draft Assistant",
+      cacheVersion: APP_CACHE_VERSION,
+      storageKey: DRAFT_SAVES_KEY
+    },
+    savedDrafts: state.savedDrafts
+  };
+
+  downloadJson(payload, `ward19-saved-drafts-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
 function saveCurrentDraftSlot() {
   const defaultName = `${leagueSettings.name} Draft ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`;
   const name = prompt("Save draft name?", defaultName);
@@ -456,8 +474,13 @@ function restoreDraftBackup(file) {
   reader.addEventListener("load", () => {
     try {
       const payload = JSON.parse(String(reader.result || "{}"));
+      if (payload.backupType === "ward19-saved-drafts") {
+        restoreSavedDraftsBackup(payload);
+        return;
+      }
+
       if (payload.backupType !== "ward19-current-draft-state" || !payload.state) {
-        alert("That file does not look like a Ward19 current draft backup.");
+        alert("That file does not look like a Ward19 backup.");
         return;
       }
 
@@ -479,6 +502,29 @@ function restoreDraftBackup(file) {
     }
   });
   reader.readAsText(file);
+}
+
+function restoreSavedDraftsBackup(payload) {
+  const importedDrafts = Array.isArray(payload.savedDrafts)
+    ? payload.savedDrafts.filter((draft) => draft?.id && draft?.name && Array.isArray(draft.picks))
+    : [];
+
+  if (!importedDrafts.length) {
+    alert("No saved drafts were found in that backup.");
+    return;
+  }
+
+  const mergeText = state.savedDrafts.length ? ` This will merge with your ${state.savedDrafts.length} existing saved draft${state.savedDrafts.length === 1 ? "" : "s"}.` : "";
+  if (!confirm(`Restore ${importedDrafts.length} saved draft${importedDrafts.length === 1 ? "" : "s"}?${mergeText}`)) return;
+
+  const existingById = new Map(state.savedDrafts.map((draft) => [draft.id, draft]));
+  importedDrafts.forEach((draft) => existingById.set(draft.id, draft));
+  const saves = Array.from(existingById.values())
+    .sort((a, b) => new Date(b.savedAt ?? 0) - new Date(a.savedAt ?? 0))
+    .slice(0, 12);
+
+  saveDraftSaves(saves);
+  setState({ savedDrafts: saves });
 }
 
 function importFantasyProsRankings(file) {
@@ -2396,6 +2442,7 @@ function renderTeamsView() {
       <div class="export-panel">
         <div class="backup-actions">
           <button class="primary-lite" data-action="save-draft-slot">Save Active Draft</button>
+          <button class="secondary" data-action="export-saved-drafts" ${state.savedDrafts.length ? "" : "disabled"}>Export Saved Drafts</button>
           <button class="primary-lite" data-action="backup-draft">Backup Current Draft</button>
           <button class="secondary" data-action="choose-restore">Restore Backup</button>
         </div>
@@ -3552,6 +3599,7 @@ function bindEvents() {
   app.querySelector("[data-action='cancel-edit']")?.addEventListener("click", cancelEditPick);
   app.querySelector("[data-action='export-draft']")?.addEventListener("click", exportDraftHistory);
   app.querySelector("[data-action='save-draft-slot']")?.addEventListener("click", saveCurrentDraftSlot);
+  app.querySelector("[data-action='export-saved-drafts']")?.addEventListener("click", exportSavedDrafts);
   app.querySelector("[data-action='backup-draft']")?.addEventListener("click", backupCurrentDraft);
   app.querySelector("[data-action='choose-restore']")?.addEventListener("click", () => app.querySelector("[data-input='restore-backup']")?.click());
   app.querySelector("[data-input='restore-backup']")?.addEventListener("change", (event) => {
