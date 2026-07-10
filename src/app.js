@@ -8,7 +8,7 @@ import { getPlayoffCorrelationWeeks, getPlayoffOpponent } from "./data/playoffSc
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
 const DRAFT_SAVES_KEY = "ward19-draft-assistant-saved-drafts-v1";
-const APP_CACHE_VERSION = "ward19-draft-v72";
+const APP_CACHE_VERSION = "ward19-draft-v73";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -398,7 +398,36 @@ function backupCurrentDraft() {
 function exportSavedDrafts() {
   if (!state.savedDrafts.length) return;
 
-  const payload = {
+  const payload = buildSavedDraftsBackupPayload();
+  downloadJson(payload, `ward19-saved-drafts-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+async function copySavedDraftsSyncCode() {
+  if (!state.savedDrafts.length) return;
+
+  const code = encodeSavedDraftsSyncCode(buildSavedDraftsBackupPayload());
+  try {
+    await navigator.clipboard.writeText(code);
+    alert("Saved drafts sync code copied. Open this app on your phone, tap Import Sync Code, and paste it there.");
+  } catch {
+    prompt("Copy this saved drafts sync code:", code);
+  }
+}
+
+function importSavedDraftsSyncCode() {
+  const code = prompt("Paste saved drafts sync code:");
+  if (!code) return;
+
+  try {
+    const payload = decodeSavedDraftsSyncCode(code.trim());
+    restoreSavedDraftsBackup(payload);
+  } catch {
+    alert("That sync code could not be read.");
+  }
+}
+
+function buildSavedDraftsBackupPayload() {
+  return {
     schemaVersion: 1,
     backupType: "ward19-saved-drafts",
     exportedAt: new Date().toISOString(),
@@ -409,8 +438,22 @@ function exportSavedDrafts() {
     },
     savedDrafts: state.savedDrafts
   };
+}
 
-  downloadJson(payload, `ward19-saved-drafts-${new Date().toISOString().slice(0, 10)}.json`);
+function encodeSavedDraftsSyncCode(payload) {
+  const json = JSON.stringify(payload);
+  return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function decodeSavedDraftsSyncCode(code) {
+  const normalized = code.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const json = decodeURIComponent(Array.from(binary, (char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""));
+  return JSON.parse(json);
 }
 
 function saveCurrentDraftSlot() {
@@ -2448,6 +2491,8 @@ function renderTeamsView() {
         <div class="backup-actions">
           <button class="primary-lite" data-action="save-draft-slot">Save Active Draft</button>
           <button class="secondary" data-action="export-saved-drafts" ${state.savedDrafts.length ? "" : "disabled"}>Export Saved Drafts</button>
+          <button class="secondary" data-action="copy-saved-drafts-code" ${state.savedDrafts.length ? "" : "disabled"}>Copy Sync Code</button>
+          <button class="secondary" data-action="import-saved-drafts-code">Import Sync Code</button>
           <button class="primary-lite" data-action="backup-draft">Backup Current Draft</button>
           <button class="secondary" data-action="choose-restore">Restore Backup</button>
         </div>
@@ -3779,6 +3824,8 @@ function bindEvents() {
   app.querySelector("[data-action='export-draft']")?.addEventListener("click", exportDraftHistory);
   app.querySelector("[data-action='save-draft-slot']")?.addEventListener("click", saveCurrentDraftSlot);
   app.querySelector("[data-action='export-saved-drafts']")?.addEventListener("click", exportSavedDrafts);
+  app.querySelector("[data-action='copy-saved-drafts-code']")?.addEventListener("click", copySavedDraftsSyncCode);
+  app.querySelector("[data-action='import-saved-drafts-code']")?.addEventListener("click", importSavedDraftsSyncCode);
   app.querySelector("[data-action='backup-draft']")?.addEventListener("click", backupCurrentDraft);
   app.querySelector("[data-action='choose-restore']")?.addEventListener("click", () => app.querySelector("[data-input='restore-backup']")?.click());
   app.querySelector("[data-input='restore-backup']")?.addEventListener("change", (event) => {
