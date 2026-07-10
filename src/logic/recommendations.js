@@ -1,4 +1,5 @@
 import { leagueSettings } from "../data/leagueSettings.js";
+import { getPlayoffCorrelationWeeks } from "../data/playoffSchedule.js";
 import { getRosterCount, getRosterNeeds } from "./draft.js";
 
 const POSITION_WEIGHTS = {
@@ -129,6 +130,7 @@ function getScoreBreakdown(player, roster, needs, currentPick, available, nextPi
   const stackBonus = getStackBonus(player, roster, currentPick);
   const bestBallCeiling = getBestBallCeilingBonus(player);
   const bestBallConstruction = getBestBallRosterConstructionBonus(player, roster, currentPick);
+  const playoffCorrelation = getPlayoffCorrelationBonus(player, roster, currentPick);
   const returnRisk = getReturnRiskBonus(player, currentPick, nextPick);
   const pathBonus = getNextPickPathBonus(player, roster, needs, available, nextPick);
   const defenseTimingPenalty = player.position === "DEF" && currentPick < leagueSettings.teams * (leagueSettings.rosterSlots.QB + leagueSettings.rosterSlots.RB + leagueSettings.rosterSlots.WR + leagueSettings.rosterSlots.TE + leagueSettings.rosterSlots.FLEX) ? 70 : 0;
@@ -148,6 +150,7 @@ function getScoreBreakdown(player, roster, needs, currentPick, available, nextPi
     { label: "Stack", value: stackBonus },
     { label: "Ceiling", value: bestBallCeiling },
     { label: "Best-ball build", value: bestBallConstruction },
+    { label: "Playoff corr", value: playoffCorrelation },
     { label: "May not return", value: returnRisk },
     { label: "Next-pick drop", value: pathBonus },
     { label: "Strategy", value: strategy },
@@ -169,6 +172,7 @@ function getVisibleBreakdown(breakdown) {
     "Stack",
     "Ceiling",
     "Best-ball build",
+    "Playoff corr",
     "May not return",
     "Next-pick drop",
     "Strategy",
@@ -493,6 +497,8 @@ function buildReason(player, roster, needs, currentPick, available, nextPick, st
   if (stackFit) reasons.push(`stack with ${stackFit.name}`);
   if (isBestBallDraft() && getBestBallCeilingBonus(player) >= 8) reasons.push("best-ball ceiling");
   if (isBestBallDraft() && getBestBallRosterConstructionBonus(player, roster, currentPick) >= 12) reasons.push("best-ball build need");
+  const playoffFit = getPlayoffCorrelationFit(player, roster, currentPick);
+  if (playoffFit) reasons.push(`W${playoffFit.weeks.join("/")} playoff mini-corr`);
   if (player.position === "WR") reasons.push("full PPR/3 WR format");
   if (getReturnRiskBonus(player, currentPick, nextPick) >= 8) reasons.push("unlikely to return");
   if (getNextPickPathBonus(player, roster, needs, available, nextPick) >= 12) reasons.push("next-pick tier drop");
@@ -593,6 +599,36 @@ function getBestBallRosterConstructionBonus(player, roster, currentPick) {
   if (position === "TE" && counts.TE === 1 && round >= 13) return 12;
 
   return 0;
+}
+
+function getPlayoffCorrelationBonus(player, roster, currentPick) {
+  const fit = getPlayoffCorrelationFit(player, roster, currentPick);
+  if (!fit) return 0;
+
+  const valueGap = getAdpValueGap(player, currentPick);
+  if (valueGap !== null && valueGap < -10) return 0;
+
+  const round = getDraftRound(currentPick);
+  const lateMultiplier = round >= 12 ? 1.25 : round >= 8 ? 1 : 0.55;
+  const positionMultiplier = ["WR", "TE", "QB"].includes(player.position) ? 1.1 : 0.85;
+  return Math.min(6 + fit.weeks.length * 3, 14) * lateMultiplier * positionMultiplier;
+}
+
+function getPlayoffCorrelationFit(player, roster, currentPick) {
+  if (!isBestBallDraft()) return null;
+  if (!["QB", "RB", "WR", "TE"].includes(player.position)) return null;
+
+  const rosterPlayers = getRosterPlayers(roster)
+    .filter((candidate) => candidate.team && candidate.team !== player.team && ["QB", "RB", "WR", "TE"].includes(candidate.position));
+  const fits = rosterPlayers
+    .map((candidate) => ({
+      player: candidate,
+      weeks: getPlayoffCorrelationWeeks(player.team, candidate.team)
+    }))
+    .filter((fit) => fit.weeks.length)
+    .sort((a, b) => b.weeks.length - a.weeks.length || a.player.rank - b.player.rank);
+
+  return fits[0] ?? null;
 }
 
 function isBestBallDraft() {

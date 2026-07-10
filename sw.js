@@ -1,4 +1,4 @@
-const CACHE_NAME = "ward19-draft-v71";
+const CACHE_NAME = "ward19-draft-v72";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -8,6 +8,7 @@ const APP_SHELL = [
   "./src/styles.css",
   "./src/data/bundledPlayerData.js",
   "./src/data/leagueSettings.js",
+  "./src/data/playoffSchedule.js",
   "./src/data/fantasyProsPlayers.js",
   "./src/data/samplePlayers.js",
   "./src/logic/draft.js",

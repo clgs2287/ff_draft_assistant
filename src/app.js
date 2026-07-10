@@ -3,11 +3,12 @@ import { bundledPlayerDataByProfile } from "./data/bundledPlayerData.js";
 import { fantasyProsPlayers } from "./data/fantasyProsPlayers.js";
 import { buildRoster, getMyUpcomingPicks, getPickInfo, getRosterCount, getRosterNeeds, getTotalPicks } from "./logic/draft.js";
 import { getAvailablePlayers, getStackFit, recommendPlayers } from "./logic/recommendations.js";
+import { getPlayoffCorrelationWeeks, getPlayoffOpponent } from "./data/playoffSchedule.js";
 
 const STORAGE_KEY = "ward19-draft-assistant-state-v1";
 const PLAYER_DATA_KEY = "ward19-draft-assistant-player-data-v1";
 const DRAFT_SAVES_KEY = "ward19-draft-assistant-saved-drafts-v1";
-const APP_CACHE_VERSION = "ward19-draft-v71";
+const APP_CACHE_VERSION = "ward19-draft-v72";
 const DEFAULT_DRAFT_SHARKS_WEIGHT = 55;
 const DEFAULT_FANTASYPROS_WEIGHT = 45;
 const DEFAULT_CUSTOM_RANKING_WEIGHT = 30;
@@ -2188,6 +2189,7 @@ function renderRecapView(ctx) {
         ${renderRecapBlock("Fix Next", recap.nextSteps)}
         ${recap.bestBall ? renderRecapBlock("Best-Ball Build", recap.bestBall.construction) : ""}
         ${recap.bestBall ? renderRecapBlock("Stacks", recap.bestBall.stacks) : ""}
+        ${recap.bestBall ? renderRecapBlock("Playoff Weeks", recap.bestBall.playoffCorrelation) : ""}
         ${recap.bestBall ? renderRecapBlock("Spike-Week Bets", recap.bestBall.ceiling) : ""}
       </div>
     </section>
@@ -2973,6 +2975,7 @@ function getBestBallAudit(myPicks, roster, counts) {
   return {
     construction: getBestBallConstructionItems(counts, myPicks.length),
     stacks: getBestBallStackItems(myPicks),
+    playoffCorrelation: getBestBallPlayoffCorrelationItems(myPicks),
     ceiling: getBestBallCeilingItems(myPicks)
   };
 }
@@ -3017,6 +3020,42 @@ function getBestBallStackItems(myPicks) {
 
   if (!stacks.length) return myPicks.length >= 10 ? ["No clear stack yet. Try to add QB/pass-catcher correlation without reaching."] : ["No stack yet. That is fine early if value is driving picks."];
   return stacks.slice(0, 4);
+}
+
+function getBestBallPlayoffCorrelationItems(myPicks) {
+  const players = myPicks.map((pick) => pick.player).filter((player) => ["QB", "RB", "WR", "TE"].includes(player.position));
+  const correlations = [];
+
+  for (let i = 0; i < players.length; i += 1) {
+    for (let j = i + 1; j < players.length; j += 1) {
+      const first = players[i];
+      const second = players[j];
+      if (!first.team || !second.team || first.team === second.team) continue;
+      const weeks = getPlayoffCorrelationWeeks(first.team, second.team);
+      if (!weeks.length) continue;
+      correlations.push({
+        weeks,
+        label: `W${weeks.join("/")} ${first.team}-${second.team}: ${first.name} + ${second.name}`
+      });
+    }
+  }
+
+  if (correlations.length) {
+    return correlations
+      .sort((a, b) => b.weeks.length - a.weeks.length || a.label.localeCompare(b.label))
+      .slice(0, 5)
+      .map((item) => item.label);
+  }
+
+  const weekNotes = [15, 16, 17]
+    .map((week) => {
+      const teams = [...new Set(players.map((player) => player.team).filter(Boolean))];
+      const liveTeams = teams.filter((team) => getPlayoffOpponent(team, week));
+      return liveTeams.length ? `W${week}: ${liveTeams.length} roster team${liveTeams.length === 1 ? "" : "s"} with known game environments` : null;
+    })
+    .filter(Boolean);
+
+  return weekNotes.length ? weekNotes : ["No playoff-week mini-correlations yet. Treat this as a late-round tie-breaker, not a reach reason."];
 }
 
 function getBestBallCeilingItems(myPicks) {
